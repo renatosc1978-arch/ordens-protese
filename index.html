@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gestao de Ordens de Protese Odontologica</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Laboratorio odontologico</p>
+        <h1>Ordens de servico</h1>
+      </div>
+      <div class="header-actions">
+        <button class="ghost-button" id="exportDataButton" type="button" title="Exportar backup">Exportar</button>
+        <label class="ghost-button file-action" for="importDataInput" title="Importar backup">Importar</label>
+        <input id="importDataInput" type="file" accept="application/json" hidden />
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="Navegacao principal">
+        <button class="nav-button active" type="button" data-view="dashboard">Painel</button>
+        <button class="nav-button" type="button" data-view="orders">Ordens</button>
+        <button class="nav-button" type="button" data-view="clients">Clientes</button>
+        <button class="nav-button" type="button" data-view="patients">Pacientes</button>
+        <button class="nav-button" type="button" data-view="search">Busca</button>
+        <button class="nav-button" type="button" data-view="reports">Relatorios</button>
+      </aside>
+
+      <section class="content">
+        <section class="view active" id="dashboardView">
+          <div class="section-title">
+            <div>
+              <h2>Painel</h2>
+              <p>Acompanhamento rapido das ordens em andamento.</p>
+            </div>
+            <button class="primary-button" type="button" data-open-view="orders">Nova ordem</button>
+          </div>
+          <div class="metric-grid" id="metricGrid"></div>
+          <div class="work-area two-columns">
+            <div>
+              <h3>Proximas entregas</h3>
+              <div class="list" id="upcomingList"></div>
+            </div>
+            <div>
+              <h3>Status das ordens</h3>
+              <div class="status-list" id="statusSummary"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="ordersView">
+          <div class="section-title">
+            <div>
+              <h2>Cadastro de ordem de servico</h2>
+              <p>Registre prazo, tipo de trabalho, valor, status e observacoes.</p>
+            </div>
+          </div>
+
+          <form class="form-grid" id="orderForm">
+            <input type="hidden" id="orderId" />
+            <label>
+              Cliente / dentista
+              <select id="orderClient" required></select>
+            </label>
+            <label>
+              Paciente
+              <select id="orderPatient" required></select>
+            </label>
+            <label>
+              Tipo de trabalho
+              <select id="orderWorkType" required></select>
+            </label>
+            <label>
+              Status
+              <select id="orderStatus" required></select>
+            </label>
+            <label>
+              Prazo de entrega
+              <input id="orderDueDate" type="date" required />
+            </label>
+            <label>
+              Valor
+              <input id="orderValue" type="number" min="0" step="0.01" placeholder="0,00" required />
+            </label>
+            <label class="full-span">
+              Observacoes
+              <textarea id="orderNotes" rows="3" placeholder="Detalhes tecnicos, cor, material, prova, ajustes..."></textarea>
+            </label>
+            <div class="form-actions full-span">
+              <button class="primary-button" type="submit">Salvar ordem</button>
+              <button class="ghost-button" id="clearOrderForm" type="button">Limpar</button>
+            </div>
+          </form>
+
+          <div class="table-toolbar">
+            <h3>Ordens cadastradas</h3>
+            <input id="orderQuickFilter" type="search" placeholder="Filtrar ordens..." />
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>OS</th>
+                  <th>Cliente</th>
+                  <th>Paciente</th>
+                  <th>Tipo</th>
+                  <th>Status</th>
+                  <th>Prazo</th>
+                  <th>Valor</th>
+                  <th>Acoes</th>
+                </tr>
+              </thead>
+              <tbody id="ordersTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="clientsView">
+          <div class="section-title">
+            <div>
+              <h2>Cadastro de clientes / dentistas</h2>
+              <p>Mantenha contatos dos solicitantes de servico.</p>
+            </div>
+          </div>
+
+          <form class="form-grid compact" id="clientForm">
+            <input type="hidden" id="clientId" />
+            <label>
+              Nome
+              <input id="clientName" required placeholder="Dra. Ana Souza" />
+            </label>
+            <label>
+              CRO
+              <input id="clientCro" placeholder="CRO-UF 00000" />
+            </label>
+            <label>
+              Telefone
+              <input id="clientPhone" placeholder="(00) 00000-0000" />
+            </label>
+            <label>
+              E-mail
+              <input id="clientEmail" type="email" placeholder="email@clinica.com" />
+            </label>
+            <label class="full-span">
+              Observacoes
+              <textarea id="clientNotes" rows="2"></textarea>
+            </label>
+            <div class="form-actions full-span">
+              <button class="primary-button" type="submit">Salvar cliente</button>
+              <button class="ghost-button" id="clearClientForm" type="button">Limpar</button>
+            </div>
+          </form>
+          <div class="card-grid" id="clientsList"></div>
+        </section>
+
+        <section class="view" id="patientsView">
+          <div class="section-title">
+            <div>
+              <h2>Cadastro de pacientes</h2>
+              <p>Vincule pacientes ao dentista responsavel.</p>
+            </div>
+          </div>
+
+          <form class="form-grid compact" id="patientForm">
+            <input type="hidden" id="patientId" />
+            <label>
+              Nome do paciente
+              <input id="patientName" required placeholder="Nome completo" />
+            </label>
+            <label>
+              Cliente / dentista
+              <select id="patientClient" required></select>
+            </label>
+            <label>
+              Telefone
+              <input id="patientPhone" placeholder="Opcional" />
+            </label>
+            <label>
+              Data de nascimento
+              <input id="patientBirthDate" type="date" />
+            </label>
+            <label class="full-span">
+              Observacoes
+              <textarea id="patientNotes" rows="2"></textarea>
+            </label>
+            <div class="form-actions full-span">
+              <button class="primary-button" type="submit">Salvar paciente</button>
+              <button class="ghost-button" id="clearPatientForm" type="button">Limpar</button>
+            </div>
+          </form>
+          <div class="card-grid" id="patientsList"></div>
+        </section>
+
+        <section class="view" id="searchView">
+          <div class="section-title">
+            <div>
+              <h2>Tela de busca</h2>
+              <p>Encontre servicos por cliente, paciente, status, tipo ou observacao.</p>
+            </div>
+          </div>
+          <div class="search-panel">
+            <input id="globalSearch" type="search" placeholder="Buscar por nome, tipo, status, observacao..." />
+            <select id="searchStatus"></select>
+            <select id="searchWorkType"></select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>OS</th>
+                  <th>Cliente</th>
+                  <th>Paciente</th>
+                  <th>Tipo</th>
+                  <th>Status</th>
+                  <th>Prazo</th>
+                  <th>Valor</th>
+                  <th>Observacoes</th>
+                </tr>
+              </thead>
+              <tbody id="searchResults"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="reportsView">
+          <div class="section-title">
+            <div>
+              <h2>Relatorio de servicos por mes</h2>
+              <p>Resumo mensal por quantidade, valores e tipo de trabalho.</p>
+            </div>
+          </div>
+          <div class="report-filters">
+            <label>
+              Mes
+              <input id="reportMonth" type="month" />
+            </label>
+            <button class="ghost-button" id="currentMonthButton" type="button">Mes atual</button>
+          </div>
+          <div class="metric-grid report-metrics" id="reportMetrics"></div>
+          <div class="work-area two-columns">
+            <div>
+              <h3>Por tipo de trabalho</h3>
+              <div class="status-list" id="reportByType"></div>
+            </div>
+            <div>
+              <h3>Servicos do mes</h3>
+              <div class="list" id="reportOrders"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
