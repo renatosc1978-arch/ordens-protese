@@ -834,14 +834,23 @@ function readPlyValue(view, offset, type, littleEndian) {
 
 function normalizePlyModel(model) {
   if (!model.vertices.length) throw new Error("PLY sem vertices para exibir.");
-  const center = model.vertices.reduce((sum, vertex) => {
-    sum[0] += vertex[0];
-    sum[1] += vertex[1];
-    sum[2] += vertex[2];
-    return sum;
-  }, [0, 0, 0]).map((value) => value / model.vertices.length);
-  const vertices = model.vertices.map((vertex) => [vertex[0] - center[0], vertex[1] - center[1], vertex[2] - center[2]]);
-  const radius = Math.max(...vertices.map((vertex) => Math.hypot(vertex[0], vertex[1], vertex[2]))) || 1;
+  const center = [0, 0, 0];
+  for (const vertex of model.vertices) {
+    center[0] += vertex[0];
+    center[1] += vertex[1];
+    center[2] += vertex[2];
+  }
+  center[0] /= model.vertices.length;
+  center[1] /= model.vertices.length;
+  center[2] /= model.vertices.length;
+
+  let radius = 1;
+  const vertices = model.vertices.map((vertex) => {
+    const normalized = [vertex[0] - center[0], vertex[1] - center[1], vertex[2] - center[2]];
+    const distance = Math.hypot(normalized[0], normalized[1], normalized[2]);
+    if (distance > radius) radius = distance;
+    return normalized;
+  });
   return { vertices, faces: model.faces, radius };
 }
 
@@ -854,7 +863,11 @@ function drawPly() {
   context.clearRect(0, 0, width, height);
   context.fillStyle = "#111815";
   context.fillRect(0, 0, width, height);
-  const points = plyView.model.vertices.map((vertex) => projectVertex(vertex, plyView, width, height));
+  const vertexStep = Math.max(1, Math.ceil(plyView.model.vertices.length / 80000));
+  const points = new Array(plyView.model.vertices.length);
+  for (let index = 0; index < plyView.model.vertices.length; index += vertexStep) {
+    points[index] = projectVertex(plyView.model.vertices[index], plyView, width, height);
+  }
   context.strokeStyle = "#9be7d8";
   context.lineWidth = 1;
   const faces = plyView.model.faces.length ? plyView.model.faces : points.map((_, index) => [index, index + 1]).slice(0, -1);
@@ -870,9 +883,13 @@ function drawPly() {
     context.stroke();
   });
   context.fillStyle = "#e8fff8";
-  points.slice(0, 8000).forEach((point) => {
+  let drawn = 0;
+  for (let index = 0; index < points.length && drawn < 8000; index += vertexStep) {
+    const point = points[index];
+    if (!point) continue;
     context.fillRect(point.x - 1, point.y - 1, 2, 2);
-  });
+    drawn += 1;
+  }
 }
 
 function projectVertex(vertex, view, width, height) {
