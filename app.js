@@ -2,6 +2,8 @@ const WORK_TYPES = ["protocolo", "coroa", "guia cirurgico", "placa", "provisorio
 const STATUSES = ["recebido", "em desenho", "em fresagem", "em acabamento", "pronto", "entregue"];
 const STORAGE_KEY = "protese-os-app-v1";
 const ALERT_STORAGE_KEY = "protese-os-alerts-v1";
+const ATTACHMENT_DB_NAME = "protese-os-attachments-v1";
+const ATTACHMENT_STORE_NAME = "files";
 
 const state = loadState();
 
@@ -88,6 +90,7 @@ function init() {
   bindEvents();
   renderStatusHistory(null);
   renderAttachments(null);
+  migrateLegacyAttachments();
   renderAll();
 }
 
@@ -357,6 +360,7 @@ function openPatientRecord(id) {
       ${otherFiles.length ? `<div class="attachments-grid">${otherFiles.map(patientFileCard).join("")}</div>` : empty("Nenhum arquivo ou escaneamento anexado nas ordens deste paciente.")}
     </section>
   `;
+  hydrateAttachmentPreviews(els.patientRecordBody, files);
   els.patientRecordModal.classList.add("open");
   els.patientRecordModal.setAttribute("aria-hidden", "false");
 }
@@ -393,15 +397,15 @@ function patientOrderItem(order) {
 function patientFileCard(file) {
   return `
     <article class="attachment-card">
-      <div class="attachment-preview">
-        ${file.type.startsWith("image/") ? `<img src="${file.dataUrl}" alt="${escapeHtml(file.name)}" />` : escapeHtml(fileExtensionLabel(file.name))}
+      <div class="attachment-preview" data-preview-id="${escapeHtml(file.id)}">
+        ${file.type.startsWith("image/") ? "Foto" : escapeHtml(fileExtensionLabel(file.name))}
       </div>
       <strong>${escapeHtml(file.name)}</strong>
       <span>${escapeHtml(file.order.id.toUpperCase())} - ${escapeHtml(file.order.workType)}</span>
       <span>${formatFileSize(file.size)} - ${formatDateTime(file.uploadedAt)}</span>
       <div class="row-actions">
         ${isPlyFile(file.name) || file.type.startsWith("image/") ? `<button class="small-button" type="button" onclick="openAttachment('${file.order.id}', '${file.id}')">Abrir</button>` : ""}
-        <a class="small-button" href="${file.dataUrl}" download="${escapeHtml(file.name)}">Baixar</a>
+        <button class="small-button" type="button" onclick="downloadAttachment('${file.order.id}', '${file.id}')">Baixar</button>
       </div>
     </article>
   `;
@@ -585,19 +589,20 @@ function renderAttachments(order) {
   els.attachmentsList.innerHTML = attachments.length
     ? attachments.map((file) => `
       <article class="attachment-card">
-        <div class="attachment-preview">
-          ${file.type.startsWith("image/") ? `<img src="${file.dataUrl}" alt="${escapeHtml(file.name)}" />` : escapeHtml(fileExtensionLabel(file.name))}
+        <div class="attachment-preview" data-preview-id="${escapeHtml(file.id)}">
+          ${file.type.startsWith("image/") ? "Foto" : escapeHtml(fileExtensionLabel(file.name))}
         </div>
         <strong>${escapeHtml(file.name)}</strong>
         <span>${formatFileSize(file.size)} - ${formatDateTime(file.uploadedAt)}</span>
         <div class="row-actions">
           ${isPlyFile(file.name) || file.type.startsWith("image/") ? `<button class="small-button" type="button" onclick="openAttachment('${order.id}', '${file.id}')">Abrir</button>` : ""}
-          <a class="small-button" href="${file.dataUrl}" download="${escapeHtml(file.name)}">Baixar</a>
+          <button class="small-button" type="button" onclick="downloadAttachment('${order.id}', '${file.id}')">Baixar</button>
           <button class="small-button danger" type="button" onclick="deleteAttachment('${order.id}', '${file.id}')">Remover</button>
         </div>
       </article>
     `).join("")
     : empty("Nenhum arquivo anexado nesta ordem.");
+  hydrateAttachmentPreviews(els.attachmentsList, attachments);
 }
 
 function uploadOrderFiles(event) {
@@ -614,8 +619,8 @@ function uploadOrderFiles(event) {
     renderAttachments(order);
     renderOrdersTable();
     toast("Arquivo(s) anexado(s).");
-  }).catch(() => {
-    toast("Nao foi possivel anexar um dos arquivos.");
+  }).catch((error) => {
+    toast(error?.message || "Nao foi possivel anexar um dos arquivos.");
   }).finally(() => {
     event.target.value = "";
   });
@@ -624,34 +629,43 @@ function uploadOrderFiles(event) {
 function readAttachmentFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve({
-      id: createId("file"),
-      name: file.name,
-      type: file.type || mimeFromName(file.name),
-      size: file.size,
-      dataUrl: reader.result,
-      uploadedAt: new Date().toISOString()
-    });
+    reader.onload = () => {
+      const metadata = {
+        id: createId("file"),
+        name: file.name,
+        type: file.type || mimeFromName(file.name),
+        size: file.size,
+        uploadedAt: new Date().toISOString()
+      };
+      saveAttachmentData(metadata.id, reader.result)
+        .then(() => resolve(metadata))
+        .catch(() => reject(new Error("Nao foi possivel salvar o arquivo no navegador. Tente um arquivo menor ou libere espaco.")));
+    };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
 }
 
-function openAttachment(orderId, fileId) {
+async function openAttachment(orderId, fileId) {
   const order = existingOrder(orderId);
   const file = order?.attachments?.find((item) => item.id === fileId);
   if (!file) return;
+  const dataUrl = await getAttachmentData(file);
+  if (!dataUrl) {
+    toast("Arquivo nao encontrado neste navegador.");
+    return;
+  }
   els.viewerTitle.textContent = file.name;
   els.viewerModal.classList.add("open");
   els.viewerModal.setAttribute("aria-hidden", "false");
   if (file.type.startsWith("image/")) {
-    els.viewerBody.innerHTML = `<img src="${file.dataUrl}" alt="${escapeHtml(file.name)}" />`;
+    els.viewerBody.innerHTML = `<img src="${dataUrl}" alt="${escapeHtml(file.name)}" />`;
     return;
   }
   if (isPlyFile(file.name)) {
     els.viewerBody.innerHTML = "";
     els.viewerBody.appendChild(els.plyCanvas);
-    renderPlyFile(file);
+    renderPlyFile(dataUrl);
   }
 }
 
@@ -665,13 +679,29 @@ function deleteAttachment(orderId, fileId) {
   const order = existingOrder(orderId);
   if (!order || !confirm("Remover este arquivo da ordem?")) return;
   order.attachments = (order.attachments || []).filter((file) => file.id !== fileId);
+  deleteAttachmentData(fileId);
   persist();
   renderAttachments(order);
   toast("Arquivo removido.");
 }
 
-function renderPlyFile(file) {
-  dataUrlToArrayBuffer(file.dataUrl).then((buffer) => {
+async function downloadAttachment(orderId, fileId) {
+  const order = existingOrder(orderId);
+  const file = order?.attachments?.find((item) => item.id === fileId);
+  if (!file) return;
+  const dataUrl = await getAttachmentData(file);
+  if (!dataUrl) {
+    toast("Arquivo nao encontrado neste navegador.");
+    return;
+  }
+  const anchor = document.createElement("a");
+  anchor.href = dataUrl;
+  anchor.download = file.name;
+  anchor.click();
+}
+
+function renderPlyFile(dataUrl) {
+  dataUrlToArrayBuffer(dataUrl).then((buffer) => {
     const model = parsePly(buffer);
     plyView = {
       model,
@@ -880,6 +910,98 @@ function movePlyDrag(event) {
 
 function stopPlyDrag() {
   if (plyView) plyView.dragging = false;
+}
+
+function openAttachmentDb() {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("Este navegador nao suporta armazenamento de arquivos."));
+      return;
+    }
+    const request = indexedDB.open(ATTACHMENT_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(ATTACHMENT_STORE_NAME);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveAttachmentData(id, dataUrl) {
+  const db = await openAttachmentDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ATTACHMENT_STORE_NAME, "readwrite");
+    transaction.objectStore(ATTACHMENT_STORE_NAME).put(dataUrl, id);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error);
+    };
+  });
+}
+
+async function loadAttachmentData(id) {
+  const db = await openAttachmentDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(ATTACHMENT_STORE_NAME, "readonly");
+    const request = transaction.objectStore(ATTACHMENT_STORE_NAME).get(id);
+    request.onsuccess = () => resolve(request.result || "");
+    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => db.close();
+  });
+}
+
+async function deleteAttachmentData(id) {
+  const db = await openAttachmentDb();
+  return new Promise((resolve) => {
+    const transaction = db.transaction(ATTACHMENT_STORE_NAME, "readwrite");
+    transaction.objectStore(ATTACHMENT_STORE_NAME).delete(id);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      resolve();
+    };
+  });
+}
+
+async function getAttachmentData(file) {
+  if (file.dataUrl) return file.dataUrl;
+  try {
+    return await loadAttachmentData(file.id);
+  } catch {
+    return "";
+  }
+}
+
+async function migrateLegacyAttachments() {
+  const legacyFiles = state.orders.flatMap((order) => order.attachments || []).filter((file) => file.dataUrl);
+  if (!legacyFiles.length) return;
+  try {
+    await Promise.all(legacyFiles.map((file) => saveAttachmentData(file.id, file.dataUrl)));
+    state.orders.forEach((order) => {
+      order.attachments = (order.attachments || []).map(({ dataUrl, ...file }) => file);
+    });
+    persist();
+  } catch {
+    toast("Alguns anexos antigos nao puderam ser migrados.");
+  }
+}
+
+function hydrateAttachmentPreviews(container, files) {
+  files.filter((file) => file.type.startsWith("image/")).forEach(async (file) => {
+    const preview = container.querySelector(`[data-preview-id="${file.id}"]`);
+    if (!preview) return;
+    const dataUrl = await getAttachmentData(file);
+    if (dataUrl) {
+      preview.innerHTML = `<img src="${dataUrl}" alt="${escapeHtml(file.name)}" />`;
+    }
+  });
 }
 
 function populateClientSelects() {
@@ -1259,6 +1381,7 @@ window.deleteOrder = deleteOrder;
 window.showOrderHistory = showOrderHistory;
 window.openAttachment = openAttachment;
 window.deleteAttachment = deleteAttachment;
+window.downloadAttachment = downloadAttachment;
 window.openPatientRecord = openPatientRecord;
 window.editPatientFromRecord = editPatientFromRecord;
 window.deletePatientFromRecord = deletePatientFromRecord;
