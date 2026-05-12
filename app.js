@@ -1,6 +1,7 @@
 const WORK_TYPES = ["protocolo", "coroa", "guia cirurgico", "placa", "provisorio", "zirconia", "dissilicato", "PMMA"];
 const STATUSES = ["recebido", "em desenho", "em fresagem", "em acabamento", "pronto", "entregue"];
 const STORAGE_KEY = "protese-os-app-v1";
+const ALERT_STORAGE_KEY = "protese-os-alerts-v1";
 
 const state = loadState();
 
@@ -16,6 +17,7 @@ const els = {
     reports: document.getElementById("reportsView")
   },
   metricGrid: document.getElementById("metricGrid"),
+  deadlineAlerts: document.getElementById("deadlineAlerts"),
   upcomingList: document.getElementById("upcomingList"),
   statusSummary: document.getElementById("statusSummary"),
   orderForm: document.getElementById("orderForm"),
@@ -25,8 +27,12 @@ const els = {
   orderWorkType: document.getElementById("orderWorkType"),
   orderStatus: document.getElementById("orderStatus"),
   orderDueDate: document.getElementById("orderDueDate"),
+  orderReminderDays: document.getElementById("orderReminderDays"),
   orderValue: document.getElementById("orderValue"),
   orderNotes: document.getElementById("orderNotes"),
+  statusHistoryList: document.getElementById("statusHistoryList"),
+  orderFilesInput: document.getElementById("orderFilesInput"),
+  attachmentsList: document.getElementById("attachmentsList"),
   clearOrderForm: document.getElementById("clearOrderForm"),
   orderQuickFilter: document.getElementById("orderQuickFilter"),
   ordersTable: document.getElementById("ordersTable"),
@@ -59,8 +65,16 @@ const els = {
   reportOrders: document.getElementById("reportOrders"),
   exportDataButton: document.getElementById("exportDataButton"),
   importDataInput: document.getElementById("importDataInput"),
+  enableNotificationsButton: document.getElementById("enableNotificationsButton"),
+  viewerModal: document.getElementById("viewerModal"),
+  viewerTitle: document.getElementById("viewerTitle"),
+  viewerBody: document.getElementById("viewerBody"),
+  plyCanvas: document.getElementById("plyCanvas"),
+  closeViewerButton: document.getElementById("closeViewerButton"),
   toast: document.getElementById("toast")
 };
+
+let plyView = null;
 
 init();
 
@@ -68,6 +82,8 @@ function init() {
   populateStaticSelects();
   setCurrentReportMonth();
   bindEvents();
+  renderStatusHistory(null);
+  renderAttachments(null);
   renderAll();
 }
 
@@ -101,6 +117,15 @@ function bindEvents() {
   els.orderClient.addEventListener("change", () => populatePatientSelect(els.orderPatient, els.orderClient.value));
   els.exportDataButton.addEventListener("click", exportData);
   els.importDataInput.addEventListener("change", importData);
+  els.enableNotificationsButton.addEventListener("click", requestNotificationPermission);
+  els.orderFilesInput.addEventListener("change", uploadOrderFiles);
+  els.closeViewerButton.addEventListener("click", closeViewer);
+  els.viewerModal.addEventListener("click", (event) => {
+    if (event.target === els.viewerModal) closeViewer();
+  });
+  els.plyCanvas.addEventListener("mousedown", startPlyDrag);
+  els.plyCanvas.addEventListener("mousemove", movePlyDrag);
+  window.addEventListener("mouseup", stopPlyDrag);
 }
 
 function populateStaticSelects() {
@@ -170,16 +195,22 @@ function saveOrder(event) {
     return;
   }
   const id = els.orderId.value || createId("os");
+  const previousOrder = existingOrder(id);
+  const status = els.orderStatus.value;
+  const statusHistory = buildStatusHistory(previousOrder, status);
   upsert(state.orders, {
     id,
     clientId: els.orderClient.value,
     patientId: els.orderPatient.value,
     workType: els.orderWorkType.value,
-    status: els.orderStatus.value,
+    status,
     dueDate: els.orderDueDate.value,
+    reminderDays: Math.max(0, Number(els.orderReminderDays.value || 0)),
     value: Number(els.orderValue.value || 0),
     notes: els.orderNotes.value.trim(),
-    createdAt: existingOrder(id)?.createdAt || new Date().toISOString()
+    attachments: previousOrder?.attachments || [],
+    statusHistory,
+    createdAt: previousOrder?.createdAt || new Date().toISOString()
   });
   persist();
   resetOrderForm();
@@ -199,6 +230,8 @@ function renderDashboard() {
     metric("Em atraso", overdueOrders.length),
     metric("Valor total", formatMoney(totalValue))
   ].join("");
+
+  renderDeadlineAlerts();
 
   const upcoming = [...openOrders]
     .filter((order) => order.dueDate)
@@ -229,6 +262,7 @@ function renderOrdersTable() {
         <td>
           <div class="row-actions">
             <button class="small-button" type="button" onclick="editOrder('${order.id}')">Editar</button>
+            <button class="small-button" type="button" onclick="showOrderHistory('${order.id}')">Historico</button>
             <button class="small-button danger" type="button" onclick="deleteOrder('${order.id}')">Excluir</button>
           </div>
         </td>
@@ -332,6 +366,412 @@ function renderStatusSummary(container, orders) {
   }).join("");
 }
 
+function renderDeadlineAlerts() {
+  const alerts = getDeadlineAlerts();
+  els.deadlineAlerts.innerHTML = alerts.length
+    ? alerts.map((item) => `
+      <article class="alert-item ${item.daysLeft < 0 ? "overdue" : ""}">
+        <strong>${escapeHtml(item.title)}</strong>
+        <span>${escapeHtml(item.detail)}</span>
+      </article>
+    `).join("")
+    : "";
+  notifyDeadlineAlerts(alerts);
+}
+
+function getDeadlineAlerts() {
+  return state.orders
+    .filter((order) => order.status !== "entregue" && order.dueDate)
+    .map((order) => {
+      const daysLeft = daysBetween(todayIso(), order.dueDate);
+      const reminderDays = Number(order.reminderDays ?? 2);
+      return { order, daysLeft, reminderDays };
+    })
+    .filter((item) => item.daysLeft <= item.reminderDays)
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+    .map(({ order, daysLeft, reminderDays }) => {
+      const title = daysLeft < 0
+        ? `Prazo vencido: ${order.id.toUpperCase()}`
+        : daysLeft === 0
+          ? `Entrega hoje: ${order.id.toUpperCase()}`
+          : `Entrega em ${daysLeft} dia(s): ${order.id.toUpperCase()}`;
+      const detail = `${patientName(order.patientId)} - ${clientName(order.clientId)} - ${order.workType} - prazo ${formatDate(order.dueDate)} - alerta ${reminderDays} dia(s) antes`;
+      return { id: order.id, title, detail, daysLeft };
+    });
+}
+
+function notifyDeadlineAlerts(alerts) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const seen = loadSeenAlerts();
+  const today = todayIso();
+  alerts.forEach((alert) => {
+    const key = `${today}:${alert.id}:${alert.daysLeft}`;
+    if (seen[key]) return;
+    new Notification(alert.title, { body: alert.detail });
+    seen[key] = true;
+  });
+  localStorage.setItem(ALERT_STORAGE_KEY, JSON.stringify(seen));
+}
+
+function requestNotificationPermission() {
+  if (!("Notification" in window)) {
+    toast("Este navegador nao suporta notificacoes.");
+    return;
+  }
+  Notification.requestPermission().then((permission) => {
+    if (permission === "granted") {
+      toast("Alertas do navegador ativados.");
+      renderDeadlineAlerts();
+    } else {
+      toast("Alertas do navegador nao foram ativados.");
+    }
+  });
+}
+
+function loadSeenAlerts() {
+  try {
+    return JSON.parse(localStorage.getItem(ALERT_STORAGE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function buildStatusHistory(previousOrder, nextStatus) {
+  const history = Array.isArray(previousOrder?.statusHistory)
+    ? [...previousOrder.statusHistory]
+    : previousOrder?.status
+      ? [{ status: previousOrder.status, changedAt: previousOrder.createdAt || new Date().toISOString() }]
+      : [];
+  const lastStatus = history[history.length - 1]?.status;
+  if (lastStatus !== nextStatus) {
+    history.push({ status: nextStatus, changedAt: new Date().toISOString() });
+  }
+  return history;
+}
+
+function renderStatusHistory(order) {
+  if (!order) {
+    els.statusHistoryList.innerHTML = empty("Selecione uma ordem para ver as mudancas de status.");
+    return;
+  }
+  const history = Array.isArray(order.statusHistory) && order.statusHistory.length
+    ? order.statusHistory
+    : [{ status: order.status, changedAt: order.createdAt || new Date().toISOString() }];
+  els.statusHistoryList.innerHTML = history
+    .map((entry) => `
+      <div class="history-entry">
+        ${statusTag(entry.status)}
+        <span>${formatDateTime(entry.changedAt)}</span>
+      </div>
+    `).join("");
+}
+
+function renderAttachments(order) {
+  if (!order) {
+    els.attachmentsList.innerHTML = empty("Salve ou selecione uma ordem para anexar escaneamentos, fotos e arquivos 3D.");
+    return;
+  }
+  const attachments = Array.isArray(order.attachments) ? order.attachments : [];
+  els.attachmentsList.innerHTML = attachments.length
+    ? attachments.map((file) => `
+      <article class="attachment-card">
+        <div class="attachment-preview">
+          ${file.type.startsWith("image/") ? `<img src="${file.dataUrl}" alt="${escapeHtml(file.name)}" />` : escapeHtml(fileExtensionLabel(file.name))}
+        </div>
+        <strong>${escapeHtml(file.name)}</strong>
+        <span>${formatFileSize(file.size)} - ${formatDateTime(file.uploadedAt)}</span>
+        <div class="row-actions">
+          ${isPlyFile(file.name) || file.type.startsWith("image/") ? `<button class="small-button" type="button" onclick="openAttachment('${order.id}', '${file.id}')">Abrir</button>` : ""}
+          <a class="small-button" href="${file.dataUrl}" download="${escapeHtml(file.name)}">Baixar</a>
+          <button class="small-button danger" type="button" onclick="deleteAttachment('${order.id}', '${file.id}')">Remover</button>
+        </div>
+      </article>
+    `).join("")
+    : empty("Nenhum arquivo anexado nesta ordem.");
+}
+
+function uploadOrderFiles(event) {
+  const order = existingOrder(els.orderId.value);
+  const files = Array.from(event.target.files || []);
+  if (!order) {
+    toast("Salve a ordem antes de anexar arquivos.");
+    event.target.value = "";
+    return;
+  }
+  Promise.all(files.map(readAttachmentFile)).then((attachments) => {
+    order.attachments = [...(order.attachments || []), ...attachments];
+    persist();
+    renderAttachments(order);
+    renderOrdersTable();
+    toast("Arquivo(s) anexado(s).");
+  }).catch(() => {
+    toast("Nao foi possivel anexar um dos arquivos.");
+  }).finally(() => {
+    event.target.value = "";
+  });
+}
+
+function readAttachmentFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      id: createId("file"),
+      name: file.name,
+      type: file.type || mimeFromName(file.name),
+      size: file.size,
+      dataUrl: reader.result,
+      uploadedAt: new Date().toISOString()
+    });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function openAttachment(orderId, fileId) {
+  const order = existingOrder(orderId);
+  const file = order?.attachments?.find((item) => item.id === fileId);
+  if (!file) return;
+  els.viewerTitle.textContent = file.name;
+  els.viewerModal.classList.add("open");
+  els.viewerModal.setAttribute("aria-hidden", "false");
+  if (file.type.startsWith("image/")) {
+    els.viewerBody.innerHTML = `<img src="${file.dataUrl}" alt="${escapeHtml(file.name)}" />`;
+    return;
+  }
+  if (isPlyFile(file.name)) {
+    els.viewerBody.innerHTML = "";
+    els.viewerBody.appendChild(els.plyCanvas);
+    renderPlyFile(file);
+  }
+}
+
+function closeViewer() {
+  els.viewerModal.classList.remove("open");
+  els.viewerModal.setAttribute("aria-hidden", "true");
+  plyView = null;
+}
+
+function deleteAttachment(orderId, fileId) {
+  const order = existingOrder(orderId);
+  if (!order || !confirm("Remover este arquivo da ordem?")) return;
+  order.attachments = (order.attachments || []).filter((file) => file.id !== fileId);
+  persist();
+  renderAttachments(order);
+  toast("Arquivo removido.");
+}
+
+function renderPlyFile(file) {
+  dataUrlToArrayBuffer(file.dataUrl).then((buffer) => {
+    const model = parsePly(buffer);
+    plyView = {
+      model,
+      rotationX: -0.25,
+      rotationY: 0.55,
+      dragging: false,
+      lastX: 0,
+      lastY: 0
+    };
+    drawPly();
+  }).catch((error) => {
+    els.viewerBody.innerHTML = `<div class="empty-state">${escapeHtml(error.message || "Nao foi possivel abrir este arquivo PLY.")}</div>`;
+  });
+}
+
+function dataUrlToArrayBuffer(dataUrl) {
+  return fetch(dataUrl).then((response) => response.arrayBuffer());
+}
+
+function parsePly(buffer) {
+  const decoder = new TextDecoder("utf-8");
+  const preview = decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 120000)));
+  const headerEnd = preview.indexOf("end_header");
+  if (headerEnd < 0) throw new Error("Arquivo PLY sem cabecalho valido.");
+  const newlineLength = preview[headerEnd + 10] === "\r" && preview[headerEnd + 11] === "\n" ? 2 : 1;
+  const headerText = preview.slice(0, headerEnd + 10);
+  const dataOffset = new TextEncoder().encode(preview.slice(0, headerEnd + 10 + newlineLength)).length;
+  const header = readPlyHeader(headerText);
+  if (header.format === "ascii") return parseAsciiPly(decoder.decode(buffer.slice(dataOffset)), header);
+  if (header.format === "binary_little_endian") return parseBinaryPly(buffer, dataOffset, header, true);
+  if (header.format === "binary_big_endian") return parseBinaryPly(buffer, dataOffset, header, false);
+  throw new Error("Formato PLY nao suportado.");
+}
+
+function readPlyHeader(headerText) {
+  const lines = headerText.split(/\r?\n/);
+  const header = { format: "", vertexCount: 0, faceCount: 0, vertexProps: [], faceProps: [] };
+  let section = "";
+  lines.forEach((line) => {
+    const parts = line.trim().split(/\s+/);
+    if (parts[0] === "format") header.format = parts[1];
+    if (parts[0] === "element") {
+      section = parts[1];
+      if (section === "vertex") header.vertexCount = Number(parts[2]);
+      if (section === "face") header.faceCount = Number(parts[2]);
+    }
+    if (parts[0] === "property" && section === "vertex") {
+      header.vertexProps.push({ name: parts[2], type: parts[1] });
+    }
+    if (parts[0] === "property" && section === "face") {
+      header.faceProps.push(parts[1] === "list"
+        ? { name: parts[4], type: "list", countType: parts[2], itemType: parts[3] }
+        : { name: parts[2], type: parts[1] });
+    }
+  });
+  return header;
+}
+
+function parseAsciiPly(text, header) {
+  const lines = text.trim().split(/\r?\n/);
+  const vertices = [];
+  for (let i = 0; i < header.vertexCount; i += 1) {
+    const values = lines[i].trim().split(/\s+/).map(Number);
+    const vertex = {};
+    header.vertexProps.forEach((prop, index) => {
+      vertex[prop.name] = values[index];
+    });
+    vertices.push([vertex.x || 0, vertex.y || 0, vertex.z || 0]);
+  }
+  const faces = [];
+  for (let i = 0; i < header.faceCount; i += 1) {
+    const values = lines[header.vertexCount + i]?.trim().split(/\s+/).map(Number) || [];
+    const count = values[0] || 0;
+    if (count >= 2) faces.push(values.slice(1, count + 1));
+  }
+  return normalizePlyModel({ vertices, faces });
+}
+
+function parseBinaryPly(buffer, offset, header, littleEndian) {
+  const view = new DataView(buffer);
+  const vertices = [];
+  let cursor = offset;
+  for (let i = 0; i < header.vertexCount; i += 1) {
+    const vertex = {};
+    header.vertexProps.forEach((prop) => {
+      const result = readPlyValue(view, cursor, prop.type, littleEndian);
+      vertex[prop.name] = result.value;
+      cursor += result.size;
+    });
+    vertices.push([vertex.x || 0, vertex.y || 0, vertex.z || 0]);
+  }
+  const faces = [];
+  for (let i = 0; i < header.faceCount; i += 1) {
+    const countProp = header.faceProps.find((prop) => prop.type === "list");
+    if (!countProp) break;
+    const countResult = readPlyValue(view, cursor, countProp.countType, littleEndian);
+    cursor += countResult.size;
+    const face = [];
+    for (let j = 0; j < countResult.value; j += 1) {
+      const itemResult = readPlyValue(view, cursor, countProp.itemType, littleEndian);
+      cursor += itemResult.size;
+      face.push(itemResult.value);
+    }
+    faces.push(face);
+  }
+  return normalizePlyModel({ vertices, faces });
+}
+
+function readPlyValue(view, offset, type, littleEndian) {
+  const readers = {
+    char: () => ({ value: view.getInt8(offset), size: 1 }),
+    uchar: () => ({ value: view.getUint8(offset), size: 1 }),
+    int8: () => ({ value: view.getInt8(offset), size: 1 }),
+    uint8: () => ({ value: view.getUint8(offset), size: 1 }),
+    short: () => ({ value: view.getInt16(offset, littleEndian), size: 2 }),
+    ushort: () => ({ value: view.getUint16(offset, littleEndian), size: 2 }),
+    int16: () => ({ value: view.getInt16(offset, littleEndian), size: 2 }),
+    uint16: () => ({ value: view.getUint16(offset, littleEndian), size: 2 }),
+    int: () => ({ value: view.getInt32(offset, littleEndian), size: 4 }),
+    uint: () => ({ value: view.getUint32(offset, littleEndian), size: 4 }),
+    int32: () => ({ value: view.getInt32(offset, littleEndian), size: 4 }),
+    uint32: () => ({ value: view.getUint32(offset, littleEndian), size: 4 }),
+    float: () => ({ value: view.getFloat32(offset, littleEndian), size: 4 }),
+    float32: () => ({ value: view.getFloat32(offset, littleEndian), size: 4 }),
+    double: () => ({ value: view.getFloat64(offset, littleEndian), size: 8 }),
+    float64: () => ({ value: view.getFloat64(offset, littleEndian), size: 8 })
+  };
+  return (readers[type] || readers.float)();
+}
+
+function normalizePlyModel(model) {
+  if (!model.vertices.length) throw new Error("PLY sem vertices para exibir.");
+  const center = model.vertices.reduce((sum, vertex) => {
+    sum[0] += vertex[0];
+    sum[1] += vertex[1];
+    sum[2] += vertex[2];
+    return sum;
+  }, [0, 0, 0]).map((value) => value / model.vertices.length);
+  const vertices = model.vertices.map((vertex) => [vertex[0] - center[0], vertex[1] - center[1], vertex[2] - center[2]]);
+  const radius = Math.max(...vertices.map((vertex) => Math.hypot(vertex[0], vertex[1], vertex[2]))) || 1;
+  return { vertices, faces: model.faces, radius };
+}
+
+function drawPly() {
+  if (!plyView) return;
+  const canvas = els.plyCanvas;
+  const context = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#111815";
+  context.fillRect(0, 0, width, height);
+  const points = plyView.model.vertices.map((vertex) => projectVertex(vertex, plyView, width, height));
+  context.strokeStyle = "#9be7d8";
+  context.lineWidth = 1;
+  const faces = plyView.model.faces.length ? plyView.model.faces : points.map((_, index) => [index, index + 1]).slice(0, -1);
+  faces.slice(0, 12000).forEach((face) => {
+    context.beginPath();
+    face.forEach((index, position) => {
+      const point = points[index];
+      if (!point) return;
+      if (position === 0) context.moveTo(point.x, point.y);
+      else context.lineTo(point.x, point.y);
+    });
+    if (face.length > 2) context.closePath();
+    context.stroke();
+  });
+  context.fillStyle = "#e8fff8";
+  points.slice(0, 8000).forEach((point) => {
+    context.fillRect(point.x - 1, point.y - 1, 2, 2);
+  });
+}
+
+function projectVertex(vertex, view, width, height) {
+  const cosY = Math.cos(view.rotationY);
+  const sinY = Math.sin(view.rotationY);
+  const cosX = Math.cos(view.rotationX);
+  const sinX = Math.sin(view.rotationX);
+  const x1 = vertex[0] * cosY - vertex[2] * sinY;
+  const z1 = vertex[0] * sinY + vertex[2] * cosY;
+  const y1 = vertex[1] * cosX - z1 * sinX;
+  const z2 = vertex[1] * sinX + z1 * cosX;
+  const scale = Math.min(width, height) * 0.38 / view.model.radius;
+  const perspective = 1 / (1 + z2 / (view.model.radius * 5));
+  return {
+    x: width / 2 + x1 * scale * perspective,
+    y: height / 2 - y1 * scale * perspective
+  };
+}
+
+function startPlyDrag(event) {
+  if (!plyView) return;
+  plyView.dragging = true;
+  plyView.lastX = event.clientX;
+  plyView.lastY = event.clientY;
+}
+
+function movePlyDrag(event) {
+  if (!plyView?.dragging) return;
+  plyView.rotationY += (event.clientX - plyView.lastX) * 0.01;
+  plyView.rotationX += (event.clientY - plyView.lastY) * 0.01;
+  plyView.lastX = event.clientX;
+  plyView.lastY = event.clientY;
+  drawPly();
+}
+
+function stopPlyDrag() {
+  if (plyView) plyView.dragging = false;
+}
+
 function populateClientSelects() {
   fillOptions(els.orderClient, state.clients.map((client) => ({ label: client.name, value: client.id })), "Selecione um cliente");
   fillOptions(els.patientClient, state.clients.map((client) => ({ label: client.name, value: client.id })), "Selecione um cliente");
@@ -392,8 +832,18 @@ function editOrder(id) {
   els.orderWorkType.value = order.workType;
   els.orderStatus.value = order.status;
   els.orderDueDate.value = order.dueDate;
+  els.orderReminderDays.value = order.reminderDays ?? 2;
   els.orderValue.value = order.value;
   els.orderNotes.value = order.notes;
+  renderStatusHistory(order);
+  renderAttachments(order);
+  showView("orders");
+}
+
+function showOrderHistory(id) {
+  const order = state.orders.find((item) => item.id === id);
+  if (!order) return;
+  renderStatusHistory(order);
   showView("orders");
 }
 
@@ -438,6 +888,9 @@ function resetPatientForm() {
 function resetOrderForm() {
   els.orderForm.reset();
   els.orderId.value = "";
+  els.orderReminderDays.value = 2;
+  renderStatusHistory(null);
+  renderAttachments(null);
   populatePatientSelect(els.orderPatient, els.orderClient.value);
 }
 
@@ -460,7 +913,7 @@ function importData(event) {
       const imported = JSON.parse(reader.result);
       state.clients = Array.isArray(imported.clients) ? imported.clients : [];
       state.patients = Array.isArray(imported.patients) ? imported.patients : [];
-      state.orders = Array.isArray(imported.orders) ? imported.orders : [];
+      state.orders = Array.isArray(imported.orders) ? imported.orders.map(normalizeOrder) : [];
       persist();
       renderAll();
       toast("Backup importado.");
@@ -474,11 +927,19 @@ function importData(event) {
 }
 
 function orderListItem(order) {
+  const daysLeft = order.dueDate ? daysBetween(todayIso(), order.dueDate) : null;
+  const deadlineText = daysLeft === null
+    ? "Sem prazo"
+    : daysLeft < 0
+      ? `Atrasado ${Math.abs(daysLeft)} dia(s)`
+      : daysLeft === 0
+        ? "Entrega hoje"
+        : `Faltam ${daysLeft} dia(s)`;
   return `
     <article class="list-item">
       <h4>${escapeHtml(order.id.toUpperCase())} - ${escapeHtml(patientName(order.patientId))}</h4>
       <p>${escapeHtml(clientName(order.clientId))} - ${escapeHtml(order.workType)} - ${statusTag(order.status)}</p>
-      <p>Prazo: ${formatDate(order.dueDate)} - Valor: ${formatMoney(order.value)}</p>
+      <p>Prazo: ${formatDate(order.dueDate)} - ${escapeHtml(deadlineText)} - Valor: ${formatMoney(order.value)}</p>
     </article>
   `;
 }
@@ -541,7 +1002,8 @@ function orderSearchText(order) {
     order.status,
     order.dueDate,
     order.value,
-    order.notes
+    order.notes,
+    ...(order.attachments || []).map((file) => file.name)
   ].join(" ");
 }
 
@@ -551,11 +1013,26 @@ function loadState() {
     return {
       clients: Array.isArray(saved?.clients) ? saved.clients : [],
       patients: Array.isArray(saved?.patients) ? saved.patients : [],
-      orders: Array.isArray(saved?.orders) ? saved.orders : []
+      orders: Array.isArray(saved?.orders) ? saved.orders.map(normalizeOrder) : []
     };
   } catch {
     return { clients: [], patients: [], orders: [] };
   }
+}
+
+function normalizeOrder(order) {
+  const createdAt = order.createdAt || new Date().toISOString();
+  const statusHistory = Array.isArray(order.statusHistory) && order.statusHistory.length
+    ? order.statusHistory
+    : [{ status: order.status || "recebido", changedAt: createdAt }];
+  return {
+    ...order,
+    status: order.status || statusHistory[statusHistory.length - 1]?.status || "recebido",
+    reminderDays: Number(order.reminderDays ?? 2),
+    attachments: Array.isArray(order.attachments) ? order.attachments : [],
+    statusHistory,
+    createdAt
+  };
 }
 
 function persist() {
@@ -574,6 +1051,41 @@ function formatDate(value) {
   if (!value) return "-";
   const [year, month, day] = value.slice(0, 10).split("-");
   return `${day}/${month}/${year}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
+}
+
+function formatFileSize(size) {
+  if (!Number(size)) return "0 KB";
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fileExtensionLabel(name) {
+  const extension = name.split(".").pop()?.toUpperCase() || "ARQ";
+  return extension.length <= 5 ? extension : "ARQ";
+}
+
+function isPlyFile(name) {
+  return name.toLowerCase().endsWith(".ply");
+}
+
+function mimeFromName(name) {
+  if (isPlyFile(name)) return "model/ply";
+  if (name.toLowerCase().endsWith(".pdf")) return "application/pdf";
+  return "application/octet-stream";
+}
+
+function daysBetween(startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  return Math.round((end - start) / 86400000);
 }
 
 function todayIso() {
@@ -622,3 +1134,6 @@ window.editPatient = editPatient;
 window.deletePatient = deletePatient;
 window.editOrder = editOrder;
 window.deleteOrder = deleteOrder;
+window.showOrderHistory = showOrderHistory;
+window.openAttachment = openAttachment;
+window.deleteAttachment = deleteAttachment;

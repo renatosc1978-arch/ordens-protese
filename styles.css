@@ -82,7 +82,9 @@ h3 {
 .form-actions,
 .table-toolbar,
 .search-panel,
-.report-filters {
+.report-filters,
+.panel-title,
+.modal-header {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -209,6 +211,37 @@ h3 {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.deadline-alerts {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.alert-item {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  background: #fff8e6;
+  border: 1px solid #f6d98b;
+  border-left: 5px solid var(--warning);
+  border-radius: 8px;
+}
+
+.alert-item.overdue {
+  background: #fff5f5;
+  border-color: #fed7d7;
+  border-left-color: var(--danger);
+}
+
+.alert-item strong {
+  font-size: 0.95rem;
+}
+
+.alert-item span {
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 
 .two-columns {
@@ -373,11 +406,97 @@ tr:last-child td {
 
 .entity-card,
 .list-item,
-.status-item {
+.status-item,
+.history-panel,
+.attachments-panel {
   padding: 14px;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.history-panel {
+  margin-bottom: 20px;
+}
+
+.attachments-panel {
+  margin-bottom: 22px;
+}
+
+.panel-title {
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.panel-title h3 {
+  margin-bottom: 0;
+}
+
+.attachments-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.attachment-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: #f8faf9;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.attachment-preview {
+  display: grid;
+  place-items: center;
+  min-height: 118px;
+  overflow: hidden;
+  background: #edf2f7;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.attachment-preview img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+}
+
+.attachment-card strong {
+  overflow-wrap: anywhere;
+  font-size: 0.92rem;
+}
+
+.attachment-card span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.history-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.history-entry:last-child {
+  border-bottom: 0;
+}
+
+.history-entry span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  text-align: right;
 }
 
 .entity-card h3,
@@ -465,6 +584,60 @@ tr:last-child td {
   transform: translateY(0);
 }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(23, 33, 27, 0.72);
+  z-index: 20;
+}
+
+.modal.open {
+  display: flex;
+}
+
+.modal-dialog {
+  width: min(1000px, 100%);
+  max-height: min(760px, 94vh);
+  overflow: hidden;
+  background: var(--surface);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.modal-header {
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal-header h3 {
+  margin-bottom: 0;
+  overflow-wrap: anywhere;
+}
+
+.viewer-body {
+  padding: 14px;
+}
+
+.viewer-body img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+  border-radius: 6px;
+}
+
+#plyCanvas {
+  width: 100%;
+  max-height: 70vh;
+  background: #111815;
+  border-radius: 6px;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -486,6 +659,7 @@ tr:last-child td {
 
   .metric-grid,
   .card-grid,
+  .attachments-grid,
   .two-columns,
   .form-grid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -505,6 +679,7 @@ tr:last-child td {
 
   .metric-grid,
   .card-grid,
+  .attachments-grid,
   .two-columns,
   .form-grid,
   .form-grid.compact {

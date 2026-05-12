@@ -16,6 +16,10 @@ Os dados ficam salvos no proprio navegador usando `localStorage`. Use os botoes 
 - Tipos de trabalho: protocolo, coroa, guia cirurgico, placa, provisorio, zirconia, dissilicato e PMMA
 - Status: recebido, em desenho, em fresagem, em acabamento, pronto e entregue
 - Prazo de entrega, valor e observacoes
+- Alerta configuravel por ordem, com antecedencia em dias antes do prazo
+- Historico automatico com data e hora de cada mudanca de status
+- Upload de arquivos por ordem, incluindo fotos, escaneamentos e arquivos 3D `.ply`
+- Visualizador simples para imagens e modelos 3D `.ply`
 - Busca por texto, status e tipo
 - Relatorio mensal com quantidade, valor total, ticket medio e resumo por tipo
 

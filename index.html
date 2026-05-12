@@ -13,6 +13,7 @@
         <h1>Ordens de servico</h1>
       </div>
       <div class="header-actions">
+        <button class="ghost-button" id="enableNotificationsButton" type="button" title="Ativar alertas do navegador">Ativar alertas</button>
         <button class="ghost-button" id="exportDataButton" type="button" title="Exportar backup">Exportar</button>
         <label class="ghost-button file-action" for="importDataInput" title="Importar backup">Importar</label>
         <input id="importDataInput" type="file" accept="application/json" hidden />
@@ -39,6 +40,7 @@
             <button class="primary-button" type="button" data-open-view="orders">Nova ordem</button>
           </div>
           <div class="metric-grid" id="metricGrid"></div>
+          <div class="deadline-alerts" id="deadlineAlerts"></div>
           <div class="work-area two-columns">
             <div>
               <h3>Proximas entregas</h3>
@@ -82,6 +84,10 @@
               <input id="orderDueDate" type="date" required />
             </label>
             <label>
+              Avisar com antecedencia
+              <input id="orderReminderDays" type="number" min="0" step="1" value="2" />
+            </label>
+            <label>
               Valor
               <input id="orderValue" type="number" min="0" step="0.01" placeholder="0,00" required />
             </label>
@@ -94,6 +100,20 @@
               <button class="ghost-button" id="clearOrderForm" type="button">Limpar</button>
             </div>
           </form>
+
+          <div class="history-panel" id="statusHistoryPanel">
+            <h3>Historico de status</h3>
+            <div class="history-list" id="statusHistoryList"></div>
+          </div>
+
+          <div class="attachments-panel" id="attachmentsPanel">
+            <div class="panel-title">
+              <h3>Arquivos da ordem</h3>
+              <label class="ghost-button file-action" for="orderFilesInput">Adicionar arquivos</label>
+              <input id="orderFilesInput" type="file" accept="image/*,.ply,.stl,.obj,.zip,.pdf" multiple hidden />
+            </div>
+            <div class="attachments-grid" id="attachmentsList"></div>
+          </div>
 
           <div class="table-toolbar">
             <h3>Ordens cadastradas</h3>
@@ -255,6 +275,17 @@
     </main>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div class="modal" id="viewerModal" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 id="viewerTitle">Visualizador</h3>
+          <button class="ghost-button" id="closeViewerButton" type="button">Fechar</button>
+        </div>
+        <div class="viewer-body" id="viewerBody">
+          <canvas id="plyCanvas" width="900" height="560"></canvas>
+        </div>
+      </div>
+    </div>
     <script src="app.js"></script>
   </body>
 </html>
