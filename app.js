@@ -1066,7 +1066,15 @@ function statusItem(label, detail, percent) {
 }
 
 function statusTag(status) {
-  const cls = status === "entregue" || status === "pronto" ? "ready" : status === "recebido" ? "warning" : "neutral";
+  const statusClasses = {
+    recebido: "status-recebido",
+    "em desenho": "status-desenho",
+    "em fresagem": "status-fresagem",
+    "em acabamento": "status-acabamento",
+    pronto: "status-pronto",
+    entregue: "status-entregue"
+  };
+  const cls = statusClasses[status] || "status-entregue";
   return `<span class="tag ${cls}">${escapeHtml(status)}</span>`;
 }
 

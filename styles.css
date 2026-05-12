@@ -378,17 +378,32 @@ tr:last-child td {
   white-space: nowrap;
 }
 
-.tag.warning {
+.tag.status-recebido {
   background: #fff7df;
-  color: var(--warning);
+  color: #9b5c00;
 }
 
-.tag.ready {
+.tag.status-desenho {
+  background: #e8f3ff;
+  color: #1f5f99;
+}
+
+.tag.status-fresagem {
+  background: #f0e8ff;
+  color: #6741a3;
+}
+
+.tag.status-acabamento {
+  background: #ffece3;
+  color: #a34724;
+}
+
+.tag.status-pronto {
   background: #e5f5eb;
-  color: var(--ready);
+  color: #2f855a;
 }
 
-.tag.neutral {
+.tag.status-entregue {
   background: #edf2f7;
   color: #4a5568;
 }
