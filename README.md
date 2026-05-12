@@ -12,6 +12,7 @@ Os dados ficam salvos no proprio navegador usando `localStorage`. Use os botoes 
 
 - Cadastro de clientes / dentistas
 - Cadastro de pacientes vinculados ao cliente
+- Ficha do paciente ao clicar no nome, com dados, ordens vinculadas, fotos e arquivos anexados
 - Cadastro de ordens de servico
 - Tipos de trabalho: protocolo, coroa, guia cirurgico, placa, provisorio, zirconia, dissilicato e PMMA
 - Status: recebido, em desenho, em fresagem, em acabamento, pronto e entregue

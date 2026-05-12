@@ -275,6 +275,15 @@
     </main>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <div class="modal" id="patientRecordModal" aria-hidden="true">
+      <div class="modal-dialog patient-record-dialog">
+        <div class="modal-header">
+          <h3 id="patientRecordTitle">Ficha do paciente</h3>
+          <button class="ghost-button" id="closePatientRecordButton" type="button">Fechar</button>
+        </div>
+        <div class="patient-record" id="patientRecordBody"></div>
+      </div>
+    </div>
     <div class="modal" id="viewerModal" aria-hidden="true">
       <div class="modal-dialog">
         <div class="modal-header">

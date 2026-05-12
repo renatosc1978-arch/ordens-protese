@@ -71,6 +71,10 @@ const els = {
   viewerBody: document.getElementById("viewerBody"),
   plyCanvas: document.getElementById("plyCanvas"),
   closeViewerButton: document.getElementById("closeViewerButton"),
+  patientRecordModal: document.getElementById("patientRecordModal"),
+  patientRecordTitle: document.getElementById("patientRecordTitle"),
+  patientRecordBody: document.getElementById("patientRecordBody"),
+  closePatientRecordButton: document.getElementById("closePatientRecordButton"),
   toast: document.getElementById("toast")
 };
 
@@ -120,8 +124,12 @@ function bindEvents() {
   els.enableNotificationsButton.addEventListener("click", requestNotificationPermission);
   els.orderFilesInput.addEventListener("change", uploadOrderFiles);
   els.closeViewerButton.addEventListener("click", closeViewer);
+  els.closePatientRecordButton.addEventListener("click", closePatientRecord);
   els.viewerModal.addEventListener("click", (event) => {
     if (event.target === els.viewerModal) closeViewer();
+  });
+  els.patientRecordModal.addEventListener("click", (event) => {
+    if (event.target === els.patientRecordModal) closePatientRecord();
   });
   els.plyCanvas.addEventListener("mousedown", startPlyDrag);
   els.plyCanvas.addEventListener("mousemove", movePlyDrag);
@@ -293,18 +301,120 @@ function renderPatients() {
   els.patientsList.innerHTML = state.patients.length
     ? state.patients.map((patient) => `
       <article class="entity-card">
-        <h3>${escapeHtml(patient.name)}</h3>
+        <h3><button class="patient-name-button" type="button" onclick="openPatientRecord('${patient.id}')">${escapeHtml(patient.name)}</button></h3>
         <p>${escapeHtml(clientName(patient.clientId))}</p>
         <p>${escapeHtml(patient.phone || "Telefone nao informado")}</p>
         <p>${patient.birthDate ? formatDate(patient.birthDate) : "Nascimento nao informado"}</p>
         ${patient.notes ? `<p>${escapeHtml(patient.notes)}</p>` : ""}
         <div class="row-actions">
+          <button class="small-button" type="button" onclick="openPatientRecord('${patient.id}')">Ficha</button>
           <button class="small-button" type="button" onclick="editPatient('${patient.id}')">Editar</button>
           <button class="small-button danger" type="button" onclick="deletePatient('${patient.id}')">Excluir</button>
         </div>
       </article>
     `).join("")
     : empty("Nenhum paciente cadastrado.");
+}
+
+function openPatientRecord(id) {
+  const patient = state.patients.find((item) => item.id === id);
+  if (!patient) return;
+  const orders = state.orders
+    .filter((order) => order.patientId === id)
+    .sort((a, b) => (b.dueDate || "").localeCompare(a.dueDate || ""));
+  const files = orders.flatMap((order) => (order.attachments || []).map((file) => ({ ...file, order })));
+  const photos = files.filter((file) => file.type.startsWith("image/"));
+  const otherFiles = files.filter((file) => !file.type.startsWith("image/"));
+
+  els.patientRecordTitle.textContent = `Ficha de ${patient.name}`;
+  els.patientRecordBody.innerHTML = `
+    <div class="record-summary">
+      ${recordSummaryItem("Paciente", patient.name)}
+      ${recordSummaryItem("Cliente / dentista", clientName(patient.clientId))}
+      ${recordSummaryItem("Telefone", patient.phone || "Nao informado")}
+      ${recordSummaryItem("Nascimento", patient.birthDate ? formatDate(patient.birthDate) : "Nao informado")}
+    </div>
+
+    <div class="row-actions">
+      <button class="small-button" type="button" onclick="editPatientFromRecord('${patient.id}')">Editar paciente</button>
+      <button class="small-button danger" type="button" onclick="deletePatientFromRecord('${patient.id}')">Excluir paciente</button>
+    </div>
+
+    ${patient.notes ? `<section class="record-section"><h4>Observacoes</h4><p>${escapeHtml(patient.notes)}</p></section>` : ""}
+
+    <section class="record-section">
+      <h4>Ordens vinculadas</h4>
+      ${orders.length ? `<div class="record-order-list">${orders.map(patientOrderItem).join("")}</div>` : empty("Nenhuma ordem vinculada a este paciente.")}
+    </section>
+
+    <section class="record-section">
+      <h4>Fotos</h4>
+      ${photos.length ? `<div class="attachments-grid">${photos.map(patientFileCard).join("")}</div>` : empty("Nenhuma foto anexada nas ordens deste paciente.")}
+    </section>
+
+    <section class="record-section">
+      <h4>Arquivos e escaneamentos</h4>
+      ${otherFiles.length ? `<div class="attachments-grid">${otherFiles.map(patientFileCard).join("")}</div>` : empty("Nenhum arquivo ou escaneamento anexado nas ordens deste paciente.")}
+    </section>
+  `;
+  els.patientRecordModal.classList.add("open");
+  els.patientRecordModal.setAttribute("aria-hidden", "false");
+}
+
+function closePatientRecord() {
+  els.patientRecordModal.classList.remove("open");
+  els.patientRecordModal.setAttribute("aria-hidden", "true");
+}
+
+function editPatientFromRecord(id) {
+  closePatientRecord();
+  editPatient(id);
+}
+
+function deletePatientFromRecord(id) {
+  closePatientRecord();
+  deletePatient(id);
+}
+
+function patientOrderItem(order) {
+  return `
+    <article class="record-order-item">
+      <strong>${escapeHtml(order.id.toUpperCase())} - ${escapeHtml(order.workType)}</strong>
+      <span>${statusTag(order.status)} Prazo: ${formatDate(order.dueDate)} - Valor: ${formatMoney(order.value)}</span>
+      ${order.notes ? `<span>${escapeHtml(order.notes)}</span>` : ""}
+      <div class="row-actions">
+        <button class="small-button" type="button" onclick="editOrderFromRecord('${order.id}')">Abrir ordem</button>
+        <button class="small-button" type="button" onclick="showOrderHistoryFromRecord('${order.id}')">Historico</button>
+      </div>
+    </article>
+  `;
+}
+
+function patientFileCard(file) {
+  return `
+    <article class="attachment-card">
+      <div class="attachment-preview">
+        ${file.type.startsWith("image/") ? `<img src="${file.dataUrl}" alt="${escapeHtml(file.name)}" />` : escapeHtml(fileExtensionLabel(file.name))}
+      </div>
+      <strong>${escapeHtml(file.name)}</strong>
+      <span>${escapeHtml(file.order.id.toUpperCase())} - ${escapeHtml(file.order.workType)}</span>
+      <span>${formatFileSize(file.size)} - ${formatDateTime(file.uploadedAt)}</span>
+      <div class="row-actions">
+        ${isPlyFile(file.name) || file.type.startsWith("image/") ? `<button class="small-button" type="button" onclick="openAttachment('${file.order.id}', '${file.id}')">Abrir</button>` : ""}
+        <a class="small-button" href="${file.dataUrl}" download="${escapeHtml(file.name)}">Baixar</a>
+      </div>
+    </article>
+  `;
+}
+
+function editOrderFromRecord(id) {
+  closePatientRecord();
+  editOrder(id);
+}
+
+function showOrderHistoryFromRecord(id) {
+  closePatientRecord();
+  showOrderHistory(id);
 }
 
 function renderSearch() {
@@ -964,6 +1074,10 @@ function metric(label, value) {
   return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`;
 }
 
+function recordSummaryItem(label, value) {
+  return `<div class="record-summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+}
+
 function tableEmpty(colspan, message) {
   return `<tr><td colspan="${colspan}" class="empty-state">${escapeHtml(message)}</td></tr>`;
 }
@@ -1137,3 +1251,8 @@ window.deleteOrder = deleteOrder;
 window.showOrderHistory = showOrderHistory;
 window.openAttachment = openAttachment;
 window.deleteAttachment = deleteAttachment;
+window.openPatientRecord = openPatientRecord;
+window.editPatientFromRecord = editPatientFromRecord;
+window.deletePatientFromRecord = deletePatientFromRecord;
+window.editOrderFromRecord = editOrderFromRecord;
+window.showOrderHistoryFromRecord = showOrderHistoryFromRecord;
