@@ -1168,11 +1168,11 @@ function orderListItem(order) {
         ? "Entrega hoje"
         : `Faltam ${daysLeft} dia(s)`;
   return `
-    <article class="list-item">
+    <button class="list-item order-card-button ${statusClass(order.status)}" type="button" onclick="editOrder('${order.id}')">
       <h4>${escapeHtml(order.id.toUpperCase())} - ${escapeHtml(patientName(order.patientId))}</h4>
       <p>${escapeHtml(clientName(order.clientId))} - ${escapeHtml(order.workType)} - ${statusTag(order.status)}</p>
       <p>Prazo: ${formatDate(order.dueDate)} - ${escapeHtml(deadlineText)} - Valor: ${formatMoney(order.value)}</p>
-    </article>
+    </button>
   `;
 }
 
@@ -1188,6 +1188,10 @@ function statusItem(label, detail, percent) {
 }
 
 function statusTag(status) {
+  return `<span class="tag ${statusClass(status)}">${escapeHtml(status)}</span>`;
+}
+
+function statusClass(status) {
   const statusClasses = {
     recebido: "status-recebido",
     "em desenho": "status-desenho",
@@ -1196,8 +1200,7 @@ function statusTag(status) {
     pronto: "status-pronto",
     entregue: "status-entregue"
   };
-  const cls = statusClasses[status] || "status-entregue";
-  return `<span class="tag ${cls}">${escapeHtml(status)}</span>`;
+  return statusClasses[status] || "status-entregue";
 }
 
 function metric(label, value) {

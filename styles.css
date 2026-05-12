@@ -430,6 +430,48 @@ tr:last-child td {
   border-radius: 8px;
 }
 
+.order-card-button {
+  width: 100%;
+  border-left-width: 6px;
+  color: inherit;
+  text-align: left;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.order-card-button:hover {
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+
+.order-card-button:focus-visible {
+  outline: 3px solid rgba(19, 111, 99, 0.18);
+  outline-offset: 2px;
+}
+
+.order-card-button.status-recebido {
+  border-left-color: #9b5c00;
+}
+
+.order-card-button.status-desenho {
+  border-left-color: #1f5f99;
+}
+
+.order-card-button.status-fresagem {
+  border-left-color: #6741a3;
+}
+
+.order-card-button.status-acabamento {
+  border-left-color: #a34724;
+}
+
+.order-card-button.status-pronto {
+  border-left-color: #2f855a;
+}
+
+.order-card-button.status-entregue {
+  border-left-color: #4a5568;
+}
+
 .history-panel {
   margin-bottom: 20px;
 }
