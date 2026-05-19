@@ -4,8 +4,11 @@ const STORAGE_KEY = "protese-os-app-v1";
 const ALERT_STORAGE_KEY = "protese-os-alerts-v1";
 const ATTACHMENT_DB_NAME = "protese-os-attachments-v1";
 const ATTACHMENT_STORE_NAME = "files";
+const SUPABASE_BUCKET = window.SUPABASE_CONFIG?.bucket || "order-files";
 
 const state = loadState();
+const supabaseClient = createSupabaseClient();
+let remoteRefreshTimer = null;
 
 const els = {
   navButtons: document.querySelectorAll(".nav-button"),
@@ -67,6 +70,7 @@ const els = {
   reportOrders: document.getElementById("reportOrders"),
   exportDataButton: document.getElementById("exportDataButton"),
   importDataInput: document.getElementById("importDataInput"),
+  syncStatus: document.getElementById("syncStatus"),
   enableNotificationsButton: document.getElementById("enableNotificationsButton"),
   viewerModal: document.getElementById("viewerModal"),
   viewerTitle: document.getElementById("viewerTitle"),
@@ -92,6 +96,7 @@ function init() {
   renderAttachments(null);
   migrateLegacyAttachments();
   renderAll();
+  initializeSupabase();
 }
 
 function bindEvents() {
@@ -161,45 +166,51 @@ function showView(viewName) {
   els.navButtons.forEach((button) => button.classList.toggle("active", button.dataset.view === viewName));
 }
 
-function saveClient(event) {
+async function saveClient(event) {
   event.preventDefault();
   const id = els.clientId.value || createId("cli");
-  upsert(state.clients, {
+  const client = {
     id,
     name: els.clientName.value.trim(),
     cro: els.clientCro.value.trim(),
     phone: els.clientPhone.value.trim(),
     email: els.clientEmail.value.trim(),
     notes: els.clientNotes.value.trim()
+  };
+  upsert(state.clients, {
+    ...client
   });
   persist();
+  await saveCloudClient(client);
   resetClientForm();
   renderAll();
   toast("Cliente salvo.");
 }
 
-function savePatient(event) {
+async function savePatient(event) {
   event.preventDefault();
   if (!state.clients.length) {
     toast("Cadastre um cliente antes de salvar pacientes.");
     return;
   }
   const id = els.patientId.value || createId("pac");
-  upsert(state.patients, {
+  const patient = {
     id,
     name: els.patientName.value.trim(),
     clientId: els.patientClient.value,
     phone: els.patientPhone.value.trim(),
     birthDate: els.patientBirthDate.value,
     notes: els.patientNotes.value.trim()
-  });
+  };
+  upsert(state.patients, patient);
   persist();
+  await saveCloudPatient(patient);
   resetPatientForm();
   renderAll();
   toast("Paciente salvo.");
 }
 
-function saveOrder(event) {
+async function saveOrder(event) {
   event.preventDefault();
   if (!state.clients.length || !state.patients.length) {
     toast("Cadastre cliente e paciente antes de salvar uma ordem.");
@@ -209,7 +220,7 @@ function saveOrder(event) {
   const previousOrder = existingOrder(id);
   const status = els.orderStatus.value;
   const statusHistory = buildStatusHistory(previousOrder, status);
-  upsert(state.orders, {
+  const order = {
     id,
     clientId: els.orderClient.value,
     patientId: els.orderPatient.value,
@@ -222,8 +233,10 @@ function saveOrder(event) {
     attachments: previousOrder?.attachments || [],
     statusHistory,
     createdAt: previousOrder?.createdAt || new Date().toISOString()
-  });
+  };
+  upsert(state.orders, order);
   persist();
+  await saveCloudOrder(order);
   resetOrderForm();
   renderAll();
   toast("Ordem de servico salva.");
@@ -613,7 +626,7 @@ function uploadOrderFiles(event) {
     event.target.value = "";
     return;
   }
-  Promise.all(files.map(readAttachmentFile)).then((attachments) => {
+  Promise.all(files.map((file) => readAttachmentFile(file, order.id))).then((attachments) => {
     order.attachments = [...(order.attachments || []), ...attachments];
     persist();
     renderAttachments(order);
@@ -626,7 +639,8 @@ function uploadOrderFiles(event) {
   });
 }
 
-function readAttachmentFile(file) {
+function readAttachmentFile(file, orderId) {
+  if (isCloudEnabled()) return uploadCloudAttachment(file, orderId);
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -678,8 +692,9 @@ function closeViewer() {
 function deleteAttachment(orderId, fileId) {
   const order = existingOrder(orderId);
   if (!order || !confirm("Remover este arquivo da ordem?")) return;
+  const file = (order.attachments || []).find((item) => item.id === fileId);
   order.attachments = (order.attachments || []).filter((file) => file.id !== fileId);
-  deleteAttachmentData(fileId);
+  deleteAttachmentData(file);
   persist();
   renderAttachments(order);
   toast("Arquivo removido.");
@@ -723,17 +738,35 @@ function dataUrlToArrayBuffer(dataUrl) {
 
 function parsePly(buffer) {
   const decoder = new TextDecoder("utf-8");
-  const preview = decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 120000)));
-  const headerEnd = preview.indexOf("end_header");
-  if (headerEnd < 0) throw new Error("Arquivo PLY sem cabecalho valido.");
-  const newlineLength = preview[headerEnd + 10] === "\r" && preview[headerEnd + 11] === "\n" ? 2 : 1;
-  const headerText = preview.slice(0, headerEnd + 10);
-  const dataOffset = new TextEncoder().encode(preview.slice(0, headerEnd + 10 + newlineLength)).length;
+  const headerInfo = findPlyHeader(buffer);
+  const headerText = decoder.decode(buffer.slice(0, headerInfo.end));
+  const dataOffset = headerInfo.dataOffset;
   const header = readPlyHeader(headerText);
   if (header.format === "ascii") return parseAsciiPly(decoder.decode(buffer.slice(dataOffset)), header);
   if (header.format === "binary_little_endian") return parseBinaryPly(buffer, dataOffset, header, true);
   if (header.format === "binary_big_endian") return parseBinaryPly(buffer, dataOffset, header, false);
   throw new Error("Formato PLY nao suportado.");
+}
+
+function findPlyHeader(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const marker = [..."end_header"].map((char) => char.charCodeAt(0));
+  for (let index = 0; index <= bytes.length - marker.length; index += 1) {
+    let found = true;
+    for (let offset = 0; offset < marker.length; offset += 1) {
+      if (bytes[index + offset] !== marker[offset]) {
+        found = false;
+        break;
+      }
+    }
+    if (found) {
+      let dataOffset = index + marker.length;
+      if (bytes[dataOffset] === 13 && bytes[dataOffset + 1] === 10) dataOffset += 2;
+      else if (bytes[dataOffset] === 10 || bytes[dataOffset] === 13) dataOffset += 1;
+      return { end: index + marker.length, dataOffset };
+    }
+  }
+  throw new Error("Arquivo PLY sem cabecalho valido.");
 }
 
 function readPlyHeader(headerText) {
@@ -795,17 +828,24 @@ function parseBinaryPly(buffer, offset, header, littleEndian) {
   }
   const faces = [];
   for (let i = 0; i < header.faceCount; i += 1) {
-    const countProp = header.faceProps.find((prop) => prop.type === "list");
-    if (!countProp) break;
-    const countResult = readPlyValue(view, cursor, countProp.countType, littleEndian);
-    cursor += countResult.size;
-    const face = [];
-    for (let j = 0; j < countResult.value; j += 1) {
-      const itemResult = readPlyValue(view, cursor, countProp.itemType, littleEndian);
-      cursor += itemResult.size;
-      face.push(itemResult.value);
-    }
-    faces.push(face);
+    let face = [];
+    header.faceProps.forEach((prop) => {
+      if (prop.type === "list") {
+        const countResult = readPlyValue(view, cursor, prop.countType, littleEndian);
+        cursor += countResult.size;
+        const values = [];
+        for (let j = 0; j < countResult.value; j += 1) {
+          const itemResult = readPlyValue(view, cursor, prop.itemType, littleEndian);
+          cursor += itemResult.size;
+          values.push(itemResult.value);
+        }
+        if (prop.name === "vertex_indices" || prop.name === "vertex_index") face = values;
+      } else {
+        const result = readPlyValue(view, cursor, prop.type, littleEndian);
+        cursor += result.size;
+      }
+    });
+    if (face.length >= 2) faces.push(face);
   }
   return normalizePlyModel({ vertices, faces });
 }
@@ -870,7 +910,7 @@ function drawPly() {
   }
   context.strokeStyle = "#9be7d8";
   context.lineWidth = 1;
-  const faces = plyView.model.faces.length ? plyView.model.faces : points.map((_, index) => [index, index + 1]).slice(0, -1);
+  const faces = plyView.model.faces.length ? plyView.model.faces : [];
   faces.slice(0, 12000).forEach((face) => {
     context.beginPath();
     face.forEach((index, position) => {
@@ -971,11 +1011,16 @@ async function loadAttachmentData(id) {
   });
 }
 
-async function deleteAttachmentData(id) {
+async function deleteAttachmentData(file) {
+  if (!file) return;
+  if (file.path && isCloudEnabled()) {
+    await deleteCloudAttachment(file);
+    return;
+  }
   const db = await openAttachmentDb();
   return new Promise((resolve) => {
     const transaction = db.transaction(ATTACHMENT_STORE_NAME, "readwrite");
-    transaction.objectStore(ATTACHMENT_STORE_NAME).delete(id);
+    transaction.objectStore(ATTACHMENT_STORE_NAME).delete(file.id);
     transaction.oncomplete = () => {
       db.close();
       resolve();
@@ -989,6 +1034,7 @@ async function deleteAttachmentData(id) {
 
 async function getAttachmentData(file) {
   if (file.dataUrl) return file.dataUrl;
+  if (file.path && isCloudEnabled()) return getCloudAttachmentUrl(file.path);
   try {
     return await loadAttachmentData(file.id);
   } catch {
@@ -1103,6 +1149,7 @@ function deleteClient(id) {
   state.patients = state.patients.filter((patient) => patient.clientId !== id);
   state.orders = state.orders.filter((order) => order.clientId !== id && !patientIds.includes(order.patientId));
   persist();
+  deleteCloudClient(id);
   renderAll();
   toast("Cliente excluido.");
 }
@@ -1112,6 +1159,7 @@ function deletePatient(id) {
   state.patients = state.patients.filter((patient) => patient.id !== id);
   state.orders = state.orders.filter((order) => order.patientId !== id);
   persist();
+  deleteCloudPatient(id);
   renderAll();
   toast("Paciente excluido.");
 }
@@ -1120,6 +1168,7 @@ function deleteOrder(id) {
   if (!confirm("Excluir esta ordem de servico?")) return;
   state.orders = state.orders.filter((order) => order.id !== id);
   persist();
+  deleteCloudOrder(id);
   renderAll();
   toast("Ordem excluida.");
 }
@@ -1157,13 +1206,14 @@ function importData(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const imported = JSON.parse(reader.result);
       state.clients = Array.isArray(imported.clients) ? imported.clients : [];
       state.patients = Array.isArray(imported.patients) ? imported.patients : [];
       state.orders = Array.isArray(imported.orders) ? imported.orders.map(normalizeOrder) : [];
       persist();
+      if (isCloudEnabled()) await pushLocalDataToSupabase(state);
       renderAll();
       toast("Backup importado.");
     } catch {
@@ -1301,6 +1351,288 @@ function normalizeOrder(order) {
 
 function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function createSupabaseClient() {
+  const config = window.SUPABASE_CONFIG || {};
+  if (!config.url || !config.anonKey || !window.supabase?.createClient) return null;
+  return window.supabase.createClient(config.url, config.anonKey);
+}
+
+function isCloudEnabled() {
+  return Boolean(supabaseClient);
+}
+
+async function initializeSupabase() {
+  if (!isCloudEnabled()) {
+    setSyncStatus("Local", "local");
+    return;
+  }
+  try {
+    setSyncStatus("Conectando...", "local");
+    const localSnapshot = cloneState(state);
+    await loadFromSupabase();
+    if (!hasAnyData(state) && hasAnyData(localSnapshot)) {
+      await pushLocalDataToSupabase(localSnapshot);
+      await loadFromSupabase();
+    }
+    renderAll();
+    subscribeToSupabaseChanges();
+    setSyncStatus("Supabase online", "online");
+    toast("Supabase conectado.");
+  } catch (error) {
+    setSyncStatus("Erro Supabase", "error");
+    toast(`Supabase nao conectado: ${error.message}`);
+  }
+}
+
+function setSyncStatus(message, status) {
+  if (!els.syncStatus) return;
+  els.syncStatus.textContent = message;
+  els.syncStatus.classList.toggle("online", status === "online");
+  els.syncStatus.classList.toggle("error", status === "error");
+}
+
+function cloneState(source) {
+  return JSON.parse(JSON.stringify(source));
+}
+
+function hasAnyData(source) {
+  return Boolean(source.clients.length || source.patients.length || source.orders.length);
+}
+
+async function pushLocalDataToSupabase(source) {
+  for (const client of source.clients) await saveCloudClient(client);
+  for (const patient of source.patients) await saveCloudPatient(patient);
+  for (const order of source.orders) {
+    await saveCloudOrder(order);
+    for (const file of order.attachments || []) {
+      if (file.path) continue;
+      const dataUrl = await getAttachmentData(file);
+      if (!dataUrl) continue;
+      const blob = await (await fetch(dataUrl)).blob();
+      const uploadFile = new File([blob], file.name, { type: file.type || blob.type });
+      await uploadCloudAttachment(uploadFile, order.id);
+    }
+  }
+}
+
+async function loadFromSupabase() {
+  const [clients, patients, orders, attachments] = await Promise.all([
+    selectCloudTable("clients"),
+    selectCloudTable("patients"),
+    selectCloudTable("orders"),
+    selectCloudTable("attachments")
+  ]);
+  state.clients = clients.map(clientFromCloud);
+  state.patients = patients.map(patientFromCloud);
+  state.orders = orders.map((order) => {
+    const appOrder = orderFromCloud(order);
+    appOrder.attachments = attachments
+      .filter((file) => file.order_id === appOrder.id)
+      .map(attachmentFromCloud);
+    return normalizeOrder(appOrder);
+  });
+  persist();
+}
+
+async function selectCloudTable(tableName) {
+  const { data, error } = await supabaseClient.from(tableName).select("*");
+  if (error) throw error;
+  return data || [];
+}
+
+function subscribeToSupabaseChanges() {
+  ["clients", "patients", "orders", "attachments"].forEach((tableName) => {
+    supabaseClient
+      .channel(`sync-${tableName}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: tableName }, scheduleCloudRefresh)
+      .subscribe();
+  });
+}
+
+function scheduleCloudRefresh() {
+  window.clearTimeout(remoteRefreshTimer);
+  remoteRefreshTimer = window.setTimeout(async () => {
+    try {
+      await loadFromSupabase();
+      renderAll();
+    } catch {
+      toast("Nao foi possivel atualizar dados do Supabase.");
+    }
+  }, 700);
+}
+
+async function saveCloudClient(client) {
+  if (!isCloudEnabled()) return;
+  const { error } = await supabaseClient.from("clients").upsert(clientToCloud(client));
+  if (error) toast(`Erro ao sincronizar cliente: ${error.message}`);
+}
+
+async function saveCloudPatient(patient) {
+  if (!isCloudEnabled()) return;
+  const { error } = await supabaseClient.from("patients").upsert(patientToCloud(patient));
+  if (error) toast(`Erro ao sincronizar paciente: ${error.message}`);
+}
+
+async function saveCloudOrder(order) {
+  if (!isCloudEnabled()) return;
+  const { error } = await supabaseClient.from("orders").upsert(orderToCloud(order));
+  if (error) toast(`Erro ao sincronizar ordem: ${error.message}`);
+}
+
+async function deleteCloudClient(id) {
+  if (!isCloudEnabled()) return;
+  await supabaseClient.from("clients").delete().eq("id", id);
+}
+
+async function deleteCloudPatient(id) {
+  if (!isCloudEnabled()) return;
+  await supabaseClient.from("patients").delete().eq("id", id);
+}
+
+async function deleteCloudOrder(id) {
+  if (!isCloudEnabled()) return;
+  await supabaseClient.from("orders").delete().eq("id", id);
+}
+
+async function uploadCloudAttachment(file, orderId) {
+  const id = createId("file");
+  const path = `${orderId}/${id}-${safeFileName(file.name)}`;
+  const metadata = {
+    id,
+    orderId,
+    name: file.name,
+    type: file.type || mimeFromName(file.name),
+    size: file.size,
+    path,
+    uploadedAt: new Date().toISOString()
+  };
+  const { error: uploadError } = await supabaseClient.storage
+    .from(SUPABASE_BUCKET)
+    .upload(path, file, { contentType: metadata.type, upsert: true });
+  if (uploadError) throw new Error(`Nao foi possivel enviar arquivo ao Supabase: ${uploadError.message}`);
+  const { error: tableError } = await supabaseClient.from("attachments").upsert(attachmentToCloud(metadata));
+  if (tableError) throw new Error(`Arquivo enviado, mas metadados falharam: ${tableError.message}`);
+  return metadata;
+}
+
+async function getCloudAttachmentUrl(path) {
+  const { data, error } = await supabaseClient.storage.from(SUPABASE_BUCKET).createSignedUrl(path, 3600);
+  if (!error && data?.signedUrl) return data.signedUrl;
+  return supabaseClient.storage.from(SUPABASE_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+async function deleteCloudAttachment(file) {
+  await supabaseClient.from("attachments").delete().eq("id", file.id);
+  if (file.path) await supabaseClient.storage.from(SUPABASE_BUCKET).remove([file.path]);
+}
+
+function clientToCloud(client) {
+  return {
+    id: client.id,
+    name: client.name,
+    cro: client.cro || "",
+    phone: client.phone || "",
+    email: client.email || "",
+    notes: client.notes || "",
+    updated_at: new Date().toISOString()
+  };
+}
+
+function patientToCloud(patient) {
+  return {
+    id: patient.id,
+    name: patient.name,
+    client_id: patient.clientId,
+    phone: patient.phone || "",
+    birth_date: patient.birthDate || null,
+    notes: patient.notes || "",
+    updated_at: new Date().toISOString()
+  };
+}
+
+function orderToCloud(order) {
+  return {
+    id: order.id,
+    client_id: order.clientId,
+    patient_id: order.patientId,
+    work_type: order.workType,
+    status: order.status,
+    due_date: order.dueDate || null,
+    reminder_days: Number(order.reminderDays || 0),
+    value: Number(order.value || 0),
+    notes: order.notes || "",
+    status_history: order.statusHistory || [],
+    created_at: order.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+}
+
+function attachmentToCloud(file) {
+  return {
+    id: file.id,
+    order_id: file.orderId,
+    name: file.name,
+    type: file.type || "",
+    size: file.size || 0,
+    path: file.path,
+    uploaded_at: file.uploadedAt || new Date().toISOString()
+  };
+}
+
+function clientFromCloud(row) {
+  return {
+    id: row.id,
+    name: row.name || "",
+    cro: row.cro || "",
+    phone: row.phone || "",
+    email: row.email || "",
+    notes: row.notes || ""
+  };
+}
+
+function patientFromCloud(row) {
+  return {
+    id: row.id,
+    name: row.name || "",
+    clientId: row.client_id || "",
+    phone: row.phone || "",
+    birthDate: row.birth_date || "",
+    notes: row.notes || ""
+  };
+}
+
+function orderFromCloud(row) {
+  return {
+    id: row.id,
+    clientId: row.client_id || "",
+    patientId: row.patient_id || "",
+    workType: row.work_type || "",
+    status: row.status || "recebido",
+    dueDate: row.due_date || "",
+    reminderDays: Number(row.reminder_days ?? 2),
+    value: Number(row.value || 0),
+    notes: row.notes || "",
+    statusHistory: Array.isArray(row.status_history) ? row.status_history : [],
+    createdAt: row.created_at || new Date().toISOString()
+  };
+}
+
+function attachmentFromCloud(row) {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    name: row.name || "",
+    type: row.type || mimeFromName(row.name || ""),
+    size: Number(row.size || 0),
+    path: row.path,
+    uploadedAt: row.uploaded_at || new Date().toISOString()
+  };
+}
+
+function safeFileName(name) {
+  return normalize(name).replace(/[^a-z0-9.\-_]+/g, "-") || "arquivo";
 }
 
 function createId(prefix) {

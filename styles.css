@@ -179,6 +179,28 @@ h3 {
   align-items: center;
 }
 
+.sync-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #edf2f7;
+  color: #4a5568;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.sync-status.online {
+  background: #e5f5eb;
+  color: #2f855a;
+}
+
+.sync-status.error {
+  background: #fff5f5;
+  color: #b83232;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr));

@@ -13,6 +13,7 @@
         <h1>Ordens de servico</h1>
       </div>
       <div class="header-actions">
+        <span class="sync-status" id="syncStatus">Local</span>
         <button class="ghost-button" id="enableNotificationsButton" type="button" title="Ativar alertas do navegador">Ativar alertas</button>
         <button class="ghost-button" id="exportDataButton" type="button" title="Exportar backup">Exportar</button>
         <label class="ghost-button file-action" for="importDataInput" title="Importar backup">Importar</label>
@@ -295,6 +296,8 @@
         </div>
       </div>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
