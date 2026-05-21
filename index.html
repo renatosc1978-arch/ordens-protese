@@ -116,6 +116,18 @@
             <div class="attachments-grid" id="attachmentsList"></div>
           </div>
 
+          <div class="links-panel" id="linksPanel">
+            <div class="panel-title">
+              <h3>Links da ordem</h3>
+            </div>
+            <form class="link-form" id="orderLinkForm">
+              <input id="orderLinkTitle" placeholder="Nome do link" />
+              <input id="orderLinkUrl" type="url" placeholder="https://drive.google.com/..." />
+              <button class="ghost-button" type="submit">Adicionar link</button>
+            </form>
+            <div class="links-list" id="orderLinksList"></div>
+          </div>
+
           <div class="table-toolbar">
             <h3>Ordens cadastradas</h3>
             <input id="orderQuickFilter" type="search" placeholder="Filtrar ordens..." />
@@ -202,6 +214,34 @@
             <label>
               Data de nascimento
               <input id="patientBirthDate" type="date" />
+            </label>
+            <label>
+              CEP
+              <input id="patientZip" placeholder="00000-000" />
+            </label>
+            <label>
+              Endereco
+              <input id="patientAddress" placeholder="Rua, avenida..." />
+            </label>
+            <label>
+              Numero
+              <input id="patientNumber" placeholder="Numero" />
+            </label>
+            <label>
+              Complemento
+              <input id="patientComplement" placeholder="Apto, sala, lote..." />
+            </label>
+            <label>
+              Bairro
+              <input id="patientDistrict" placeholder="Bairro" />
+            </label>
+            <label>
+              Cidade
+              <input id="patientCity" placeholder="Goiania" />
+            </label>
+            <label>
+              Estado
+              <input id="patientState" maxlength="2" placeholder="GO" />
             </label>
             <label class="full-span">
               Observacoes

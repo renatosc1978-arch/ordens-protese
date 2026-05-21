@@ -38,6 +38,10 @@ const els = {
   statusHistoryList: document.getElementById("statusHistoryList"),
   orderFilesInput: document.getElementById("orderFilesInput"),
   attachmentsList: document.getElementById("attachmentsList"),
+  orderLinkForm: document.getElementById("orderLinkForm"),
+  orderLinkTitle: document.getElementById("orderLinkTitle"),
+  orderLinkUrl: document.getElementById("orderLinkUrl"),
+  orderLinksList: document.getElementById("orderLinksList"),
   clearOrderForm: document.getElementById("clearOrderForm"),
   orderQuickFilter: document.getElementById("orderQuickFilter"),
   ordersTable: document.getElementById("ordersTable"),
@@ -56,6 +60,13 @@ const els = {
   patientClient: document.getElementById("patientClient"),
   patientPhone: document.getElementById("patientPhone"),
   patientBirthDate: document.getElementById("patientBirthDate"),
+  patientZip: document.getElementById("patientZip"),
+  patientAddress: document.getElementById("patientAddress"),
+  patientNumber: document.getElementById("patientNumber"),
+  patientComplement: document.getElementById("patientComplement"),
+  patientDistrict: document.getElementById("patientDistrict"),
+  patientCity: document.getElementById("patientCity"),
+  patientState: document.getElementById("patientState"),
   patientNotes: document.getElementById("patientNotes"),
   clearPatientForm: document.getElementById("clearPatientForm"),
   patientsList: document.getElementById("patientsList"),
@@ -94,6 +105,7 @@ function init() {
   bindEvents();
   renderStatusHistory(null);
   renderAttachments(null);
+  renderOrderLinks(null);
   migrateLegacyAttachments();
   renderAll();
   initializeSupabase();
@@ -131,6 +143,7 @@ function bindEvents() {
   els.importDataInput.addEventListener("change", importData);
   els.enableNotificationsButton.addEventListener("click", requestNotificationPermission);
   els.orderFilesInput.addEventListener("change", uploadOrderFiles);
+  els.orderLinkForm.addEventListener("submit", saveOrderLink);
   els.closeViewerButton.addEventListener("click", closeViewer);
   els.closePatientRecordButton.addEventListener("click", closePatientRecord);
   els.viewerModal.addEventListener("click", (event) => {
@@ -200,6 +213,13 @@ async function savePatient(event) {
     clientId: els.patientClient.value,
     phone: els.patientPhone.value.trim(),
     birthDate: els.patientBirthDate.value,
+    zip: els.patientZip.value.trim(),
+    address: els.patientAddress.value.trim(),
+    number: els.patientNumber.value.trim(),
+    complement: els.patientComplement.value.trim(),
+    district: els.patientDistrict.value.trim(),
+    city: els.patientCity.value.trim(),
+    state: els.patientState.value.trim().toUpperCase(),
     notes: els.patientNotes.value.trim()
   };
   upsert(state.patients, patient);
@@ -218,6 +238,13 @@ async function saveOrder(event) {
   }
   const id = els.orderId.value || createId("os");
   const previousOrder = existingOrder(id);
+  const nextDueDate = els.orderDueDate.value;
+  if (shouldWarnAboutDeliveryDate(previousOrder, nextDueDate, els.orderPatient.value)) {
+    const patient = state.patients.find((item) => item.id === els.orderPatient.value);
+    const city = patient?.city || "cidade nao informada";
+    const proceed = confirm(`Atencao: este paciente reside em ${city}, fora de Goiania/Anapolis. Confirmar alteracao do prazo de entrega para ${formatDate(nextDueDate)}?`);
+    if (!proceed) return;
+  }
   const status = els.orderStatus.value;
   const statusHistory = buildStatusHistory(previousOrder, status);
   const order = {
@@ -226,11 +253,12 @@ async function saveOrder(event) {
     patientId: els.orderPatient.value,
     workType: els.orderWorkType.value,
     status,
-    dueDate: els.orderDueDate.value,
+    dueDate: nextDueDate,
     reminderDays: Math.max(0, Number(els.orderReminderDays.value || 0)),
     value: Number(els.orderValue.value || 0),
     notes: els.orderNotes.value.trim(),
     attachments: previousOrder?.attachments || [],
+    links: previousOrder?.links || [],
     statusHistory,
     createdAt: previousOrder?.createdAt || new Date().toISOString()
   };
@@ -320,6 +348,7 @@ function renderPatients() {
         <h3><button class="patient-name-button" type="button" onclick="openPatientRecord('${patient.id}')">${escapeHtml(patient.name)}</button></h3>
         <p>${escapeHtml(clientName(patient.clientId))}</p>
         <p>${escapeHtml(patient.phone || "Telefone nao informado")}</p>
+        <p>${escapeHtml(patientLocation(patient) || "Endereco nao informado")}</p>
         <p>${patient.birthDate ? formatDate(patient.birthDate) : "Nascimento nao informado"}</p>
         ${patient.notes ? `<p>${escapeHtml(patient.notes)}</p>` : ""}
         <div class="row-actions">
@@ -349,6 +378,7 @@ function openPatientRecord(id) {
       ${recordSummaryItem("Cliente / dentista", clientName(patient.clientId))}
       ${recordSummaryItem("Telefone", patient.phone || "Nao informado")}
       ${recordSummaryItem("Nascimento", patient.birthDate ? formatDate(patient.birthDate) : "Nao informado")}
+      ${recordSummaryItem("Cidade", patientLocation(patient) || "Nao informado")}
     </div>
 
     <div class="row-actions">
@@ -357,6 +387,11 @@ function openPatientRecord(id) {
     </div>
 
     ${patient.notes ? `<section class="record-section"><h4>Observacoes</h4><p>${escapeHtml(patient.notes)}</p></section>` : ""}
+
+    <section class="record-section">
+      <h4>Endereco</h4>
+      <p>${escapeHtml(formatPatientAddress(patient) || "Endereco nao informado.")}</p>
+    </section>
 
     <section class="record-section">
       <h4>Ordens vinculadas</h4>
@@ -698,6 +733,61 @@ function deleteAttachment(orderId, fileId) {
   persist();
   renderAttachments(order);
   toast("Arquivo removido.");
+}
+
+function renderOrderLinks(order) {
+  if (!order) {
+    els.orderLinksList.innerHTML = empty("Salve ou selecione uma ordem para adicionar links de Google Drive, Dropbox ou outros arquivos.");
+    return;
+  }
+  const links = Array.isArray(order.links) ? order.links : [];
+  els.orderLinksList.innerHTML = links.length
+    ? links.map((link) => `
+      <div class="link-item">
+        <div>
+          <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.title || link.url)}</a>
+          <span>${escapeHtml(link.url)}</span>
+        </div>
+        <button class="small-button danger" type="button" onclick="deleteOrderLink('${order.id}', '${link.id}')">Remover</button>
+      </div>
+    `).join("")
+    : empty("Nenhum link adicionado nesta ordem.");
+}
+
+async function saveOrderLink(event) {
+  event.preventDefault();
+  const order = existingOrder(els.orderId.value);
+  if (!order) {
+    toast("Salve a ordem antes de adicionar links.");
+    return;
+  }
+  const url = els.orderLinkUrl.value.trim();
+  if (!url) {
+    toast("Informe o link.");
+    return;
+  }
+  const link = {
+    id: createId("link"),
+    title: els.orderLinkTitle.value.trim() || url,
+    url,
+    createdAt: new Date().toISOString()
+  };
+  order.links = [...(order.links || []), link];
+  persist();
+  await saveCloudOrder(order);
+  els.orderLinkForm.reset();
+  renderOrderLinks(order);
+  toast("Link adicionado.");
+}
+
+async function deleteOrderLink(orderId, linkId) {
+  const order = existingOrder(orderId);
+  if (!order || !confirm("Remover este link da ordem?")) return;
+  order.links = (order.links || []).filter((link) => link.id !== linkId);
+  persist();
+  await saveCloudOrder(order);
+  renderOrderLinks(order);
+  toast("Link removido.");
 }
 
 async function downloadAttachment(orderId, fileId) {
@@ -1113,6 +1203,13 @@ function editPatient(id) {
   els.patientClient.value = patient.clientId;
   els.patientPhone.value = patient.phone;
   els.patientBirthDate.value = patient.birthDate;
+  els.patientZip.value = patient.zip || "";
+  els.patientAddress.value = patient.address || "";
+  els.patientNumber.value = patient.number || "";
+  els.patientComplement.value = patient.complement || "";
+  els.patientDistrict.value = patient.district || "";
+  els.patientCity.value = patient.city || "";
+  els.patientState.value = patient.state || "";
   els.patientNotes.value = patient.notes;
   showView("patients");
 }
@@ -1132,6 +1229,7 @@ function editOrder(id) {
   els.orderNotes.value = order.notes;
   renderStatusHistory(order);
   renderAttachments(order);
+  renderOrderLinks(order);
   showView("orders");
 }
 
@@ -1189,6 +1287,7 @@ function resetOrderForm() {
   els.orderReminderDays.value = 2;
   renderStatusHistory(null);
   renderAttachments(null);
+  renderOrderLinks(null);
   populatePatientSelect(els.orderPatient, els.orderClient.value);
 }
 
@@ -1210,7 +1309,7 @@ function importData(event) {
     try {
       const imported = JSON.parse(reader.result);
       state.clients = Array.isArray(imported.clients) ? imported.clients : [];
-      state.patients = Array.isArray(imported.patients) ? imported.patients : [];
+      state.patients = Array.isArray(imported.patients) ? imported.patients.map(normalizePatient) : [];
       state.orders = Array.isArray(imported.orders) ? imported.orders.map(normalizeOrder) : [];
       persist();
       if (isCloudEnabled()) await pushLocalDataToSupabase(state);
@@ -1307,6 +1406,29 @@ function patientName(id) {
   return state.patients.find((patient) => patient.id === id)?.name || "Paciente removido";
 }
 
+function patientLocation(patient) {
+  return [patient.city, patient.state].filter(Boolean).join(" / ");
+}
+
+function formatPatientAddress(patient) {
+  const street = [patient.address, patient.number].filter(Boolean).join(", ");
+  return [
+    street,
+    patient.complement,
+    patient.district,
+    patientLocation(patient),
+    patient.zip ? `CEP ${patient.zip}` : ""
+  ].filter(Boolean).join(" - ");
+}
+
+function shouldWarnAboutDeliveryDate(previousOrder, nextDueDate, patientId) {
+  if (!previousOrder || !nextDueDate || previousOrder.dueDate === nextDueDate) return false;
+  const patient = state.patients.find((item) => item.id === patientId);
+  if (!patient) return false;
+  const city = normalize(patient.city);
+  return city !== "goiania" && city !== "anapolis";
+}
+
 function orderSearchText(order) {
   return [
     order.id,
@@ -1317,6 +1439,7 @@ function orderSearchText(order) {
     order.dueDate,
     order.value,
     order.notes,
+    ...(order.links || []).flatMap((link) => [link.title, link.url]),
     ...(order.attachments || []).map((file) => file.name)
   ].join(" ");
 }
@@ -1326,7 +1449,7 @@ function loadState() {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     return {
       clients: Array.isArray(saved?.clients) ? saved.clients : [],
-      patients: Array.isArray(saved?.patients) ? saved.patients : [],
+      patients: Array.isArray(saved?.patients) ? saved.patients.map(normalizePatient) : [],
       orders: Array.isArray(saved?.orders) ? saved.orders.map(normalizeOrder) : []
     };
   } catch {
@@ -1344,8 +1467,22 @@ function normalizeOrder(order) {
     status: order.status || statusHistory[statusHistory.length - 1]?.status || "recebido",
     reminderDays: Number(order.reminderDays ?? 2),
     attachments: Array.isArray(order.attachments) ? order.attachments : [],
+    links: Array.isArray(order.links) ? order.links : [],
     statusHistory,
     createdAt
+  };
+}
+
+function normalizePatient(patient) {
+  return {
+    ...patient,
+    zip: patient.zip || "",
+    address: patient.address || "",
+    number: patient.number || "",
+    complement: patient.complement || "",
+    district: patient.district || "",
+    city: patient.city || "",
+    state: patient.state || ""
   };
 }
 
@@ -1425,7 +1562,7 @@ async function loadFromSupabase() {
     selectCloudTable("attachments")
   ]);
   state.clients = clients.map(clientFromCloud);
-  state.patients = patients.map(patientFromCloud);
+  state.patients = patients.map(patientFromCloud).map(normalizePatient);
   state.orders = orders.map((order) => {
     const appOrder = orderFromCloud(order);
     appOrder.attachments = attachments
@@ -1547,6 +1684,13 @@ function patientToCloud(patient) {
     client_id: patient.clientId,
     phone: patient.phone || "",
     birth_date: patient.birthDate || null,
+    zip: patient.zip || "",
+    address: patient.address || "",
+    number: patient.number || "",
+    complement: patient.complement || "",
+    district: patient.district || "",
+    city: patient.city || "",
+    state: patient.state || "",
     notes: patient.notes || "",
     updated_at: new Date().toISOString()
   };
@@ -1563,6 +1707,7 @@ function orderToCloud(order) {
     reminder_days: Number(order.reminderDays || 0),
     value: Number(order.value || 0),
     notes: order.notes || "",
+    links: order.links || [],
     status_history: order.statusHistory || [],
     created_at: order.createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString()
@@ -1599,6 +1744,13 @@ function patientFromCloud(row) {
     clientId: row.client_id || "",
     phone: row.phone || "",
     birthDate: row.birth_date || "",
+    zip: row.zip || "",
+    address: row.address || "",
+    number: row.number || "",
+    complement: row.complement || "",
+    district: row.district || "",
+    city: row.city || "",
+    state: row.state || "",
     notes: row.notes || ""
   };
 }
@@ -1614,6 +1766,7 @@ function orderFromCloud(row) {
     reminderDays: Number(row.reminder_days ?? 2),
     value: Number(row.value || 0),
     notes: row.notes || "",
+    links: Array.isArray(row.links) ? row.links : [],
     statusHistory: Array.isArray(row.status_history) ? row.status_history : [],
     createdAt: row.created_at || new Date().toISOString()
   };
@@ -1734,6 +1887,7 @@ window.showOrderHistory = showOrderHistory;
 window.openAttachment = openAttachment;
 window.deleteAttachment = deleteAttachment;
 window.downloadAttachment = downloadAttachment;
+window.deleteOrderLink = deleteOrderLink;
 window.openPatientRecord = openPatientRecord;
 window.editPatientFromRecord = editPatientFromRecord;
 window.deletePatientFromRecord = deletePatientFromRecord;

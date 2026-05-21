@@ -29,6 +29,7 @@ Depois disso, abra o app novamente. Se houver dados locais e o Supabase estiver 
 
 - Cadastro de clientes / dentistas
 - Cadastro de pacientes vinculados ao cliente
+- Endereco completo no cadastro e na ficha dos pacientes
 - Ficha do paciente ao clicar no nome, com dados, ordens vinculadas, fotos e arquivos anexados
 - Cadastro de ordens de servico
 - Tipos de trabalho: protocolo, coroa, guia cirurgico, placa, provisorio, zirconia, dissilicato e PMMA
@@ -37,6 +38,8 @@ Depois disso, abra o app novamente. Se houver dados locais e o Supabase estiver 
 - Alerta configuravel por ordem, com antecedencia em dias antes do prazo
 - Historico automatico com data e hora de cada mudanca de status
 - Upload de arquivos por ordem, incluindo fotos, escaneamentos e arquivos 3D `.ply`
+- Links por ordem para Google Drive, Dropbox e outros compartilhamentos
+- Alerta ao alterar prazo de entrega de pacientes fora de Goiania ou Anapolis
 - Visualizador simples para imagens e modelos 3D `.ply`
 - Sincronizacao via Supabase entre navegadores e computadores
 - Busca por texto, status e tipo

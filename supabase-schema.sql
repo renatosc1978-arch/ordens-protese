@@ -14,6 +14,13 @@ create table if not exists public.patients (
   client_id text references public.clients(id) on delete cascade,
   phone text,
   birth_date date,
+  zip text,
+  address text,
+  number text,
+  complement text,
+  district text,
+  city text,
+  state text,
   notes text,
   updated_at timestamptz default now()
 );
@@ -28,10 +35,20 @@ create table if not exists public.orders (
   reminder_days integer default 2,
   value numeric default 0,
   notes text,
+  links jsonb default '[]'::jsonb,
   status_history jsonb default '[]'::jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+alter table public.patients add column if not exists zip text;
+alter table public.patients add column if not exists address text;
+alter table public.patients add column if not exists number text;
+alter table public.patients add column if not exists complement text;
+alter table public.patients add column if not exists district text;
+alter table public.patients add column if not exists city text;
+alter table public.patients add column if not exists state text;
+alter table public.orders add column if not exists links jsonb default '[]'::jsonb;
 
 create table if not exists public.attachments (
   id text primary key,

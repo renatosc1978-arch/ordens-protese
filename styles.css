@@ -445,7 +445,8 @@ tr:last-child td {
 .list-item,
 .status-item,
 .history-panel,
-.attachments-panel {
+.attachments-panel,
+.links-panel {
   padding: 14px;
   background: #fff;
   border: 1px solid var(--line);
@@ -500,6 +501,47 @@ tr:last-child td {
 
 .attachments-panel {
   margin-bottom: 22px;
+}
+
+.links-panel {
+  margin-bottom: 22px;
+}
+
+.link-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.8fr) minmax(220px, 1.2fr) auto;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.links-list {
+  display: grid;
+  gap: 8px;
+}
+
+.link-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.link-item:last-child {
+  border-bottom: 0;
+}
+
+.link-item a {
+  color: var(--accent);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.link-item span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
 }
 
 .panel-title {
@@ -823,7 +865,8 @@ tr:last-child td {
   .attachments-grid,
   .record-summary,
   .two-columns,
-  .form-grid.compact {
+  .form-grid.compact,
+  .link-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -845,7 +888,9 @@ tr:last-child td {
   .record-summary,
   .two-columns,
   .form-grid,
-  .form-grid.compact {
+  .form-grid.compact,
+  .link-form,
+  .link-item {
     grid-template-columns: 1fr;
   }
 
